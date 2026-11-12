@@ -8,9 +8,9 @@ Claude plans the work and reviews every result. Tasks are split up and handed to
 >
 > Note: the terminal app currently speaks **Turkish**; the web workspace has an **EN/TR** switch.
 
-![Web workspace: Claude consults Gemini while tasks move across the board](docs/en/office.png)
+![Web workspace: Claude consults Copilot while tasks move across the board](docs/en/office.png)
 
-<sub>Screenshots were taken with mock agents (`--mock`), which use no subscription quota.</sub>
+<sub>Screenshots were taken with mock agents (`--mock`, Claude + Copilot team), which use no subscription quota.</sub>
 
 ## Why?
 

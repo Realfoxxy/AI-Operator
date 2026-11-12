@@ -198,6 +198,8 @@ class TerminalTeamCommandTests(unittest.TestCase):
         app.handle("/cikar claude-kodcu")
         self.assertNotIn("claude-kodcu", app.cfg.agents)
         app.handle("/ekle yok-boyle")
+        app.banner()
+        self.assertIn("Claude planlar ve denetler · Copilot ekipte", self.out.getvalue())   # kapalı Gemini yazılmaz
         out = self.out.getvalue()
         for frag in ("Eklenebilir yapay zekâlar", "✔ claude-kodcu ekibe eklendi", "✔ gemini kapatıldı",
                      "○ kapalı", "✔ claude-kodcu ekipten çıkarıldı", "Katalogda 'yok-boyle' yok"):

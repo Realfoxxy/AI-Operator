@@ -497,7 +497,12 @@ class TerminalApp:
         o.line("")
         o.line(f"  ◆ Orkestra {__version__} — çok-ajanlı proje geliştirme terminali" + (" (sahte ajanlar)" if self.mock else ""),
                "bold")
-        o.line("    Claude planlar ve denetler · Gemini ve Copilot ekipte · her şey senin hesaplarınla", "dim")
+        st = self.cfg.settings
+        lead = st.planner.capitalize()
+        team = [n.capitalize() for n in self.cfg.agents if n not in (st.planner, st.reviewer)]
+        team_txt = (" ve ".join([", ".join(team[:-1]), team[-1]]) if len(team) > 1 else team[0]) + " ekipte" if team \
+            else "ekipte başka ajan yok"
+        o.line(f"    {lead} planlar ve denetler · {team_txt} · her şey senin hesaplarınla", "dim")
         o.line("")
         self.cmd_hesaplar([], short=True)
         o.line("")
