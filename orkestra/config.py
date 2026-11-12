@@ -386,10 +386,14 @@ def load_config(path: Path) -> Config:
     """Config dosyasını okur, doğrular ve Config nesnesi döndürür (yalnızca etkin ajanlar)."""
     path = Path(path)
     try:
-        with open(path, "rb") as f:
-            data = tomllib.load(f)
+        # Windows Not Defteri gibi editörler dosyanın başına UTF-8 BOM ekleyebilir; tomllib bunu kabul
+        # etmediği için okunmadan önce çıkarılır.
+        raw = path.read_bytes().removeprefix(b"\xef\xbb\xbf")
+        data = tomllib.loads(raw.decode("utf-8"))
     except FileNotFoundError as e:
         raise ConfigError(f"Config dosyası bulunamadı: {path}") from e
+    except UnicodeDecodeError as e:
+        raise ConfigError(f"Config dosyası UTF-8 değil: {path} ({e}). Dosyayı UTF-8 olarak kaydet.") from e
     except tomllib.TOMLDecodeError as e:
         raise ConfigError(f"Config dosyası geçerli TOML değil: {path} ({e})") from e
     except OSError as e:

@@ -129,6 +129,15 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaises(ConfigError):
             load_config(self._write(base.replace('command = ["a"]', 'command = ["a"]\ncolor = "kirmizi"')))
 
+    def test_bom_and_crlf_tolerated(self):
+        # Windows Not Defteri BOM ve CRLF ile kaydedebilir
+        text = (ROOT / "config.toml").read_text(encoding="utf-8").replace("[agents.gemini]", "[agents.gemini]\nenabled = false", 1)
+        p = self._write("")
+        p.write_bytes(b"\xef\xbb\xbf" + text.replace("\n", "\r\n").encode("utf-8"))
+        cfg = load_config(p)
+        self.assertNotIn("gemini", cfg.agents)
+        self.assertIn("copilot", cfg.agents)
+
     def test_missing_file(self):
         with self.assertRaises(ConfigError):
             load_config(Path(tempfile.gettempdir()) / "yok-orkestra-xyz.toml")
