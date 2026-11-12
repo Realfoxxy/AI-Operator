@@ -40,11 +40,14 @@ def _int0(v) -> int:
 
 def usage_from(data: dict) -> dict | None:
     """CLI JSON çıktısından kullanım bilgisini çıkarır (Claude: usage/total_cost_usd, Gemini: stats)."""
-    girdi = cikti = 0
+    girdi = cikti = onbellek = 0
     maliyet = None
     u = data.get("usage")
     if isinstance(u, dict):
-        girdi += sum(_int0(u.get(k)) for k in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
+        # Önbellekten okunan tokenlar ayrı tutulur: Claude Code her turda aynı bağlamı önbellekten tekrar okur;
+        # bunları girdiye eklemek gerçek iş yükünü olduğundan kat kat büyük gösterir.
+        girdi += _int0(u.get("input_tokens")) + _int0(u.get("cache_creation_input_tokens"))
+        onbellek += _int0(u.get("cache_read_input_tokens"))
         cikti += _int0(u.get("output_tokens"))
     c = data.get("total_cost_usd")
     if isinstance(c, (int, float)) and not isinstance(c, bool) and c >= 0:
@@ -56,9 +59,9 @@ def usage_from(data: dict) -> dict | None:
             if isinstance(t, dict):
                 girdi += _int0(t.get("prompt"))
                 cikti += _int0(t.get("candidates"))
-    if not girdi and not cikti and maliyet is None:
+    if not girdi and not cikti and not onbellek and maliyet is None:
         return None
-    return {"girdi": girdi, "cikti": cikti, "maliyet_usd": maliyet}
+    return {"girdi": girdi, "cikti": cikti, "onbellek": onbellek, "maliyet_usd": maliyet}
 
 
 # Resmi CLI'ların npm paketleri: "programı bulunamadı" mesajında kurulum komutu gösterilir.
@@ -417,7 +420,7 @@ class MockAgent(Agent):
         text = await self._respond(prompt, write=write, workdir=workdir, tag=tag, on_chunk=on_chunk)
         if meta is not None:
             # Sahte kullanım: kabaca 4 karakter = 1 token. Sahte oturum kimliği, sürekliliğin testi içindir.
-            meta["usage"] = {"girdi": len(prompt) // 4, "cikti": len(text) // 4, "maliyet_usd": None}
+            meta["usage"] = {"girdi": len(prompt) // 4, "cikti": len(text) // 4, "onbellek": 0, "maliyet_usd": None}
             if self.cfg.session_field:
                 meta["session"] = session or f"sahte-oturum-{self.name}-{tag.split('-')[0]}"
         return text
@@ -495,7 +498,7 @@ class OllamaAgent(Agent):
             raise AgentError(f"{self.name}: Ollama yanıtında metin yok.")
         if meta is not None:
             meta["usage"] = {"girdi": _int0(data.get("prompt_eval_count")), "cikti": _int0(data.get("eval_count")),
-                             "maliyet_usd": None}
+                             "onbellek": 0, "maliyet_usd": None}
         if on_chunk:
             on_chunk(text)
         return text.strip()[: cfg.max_output_chars]

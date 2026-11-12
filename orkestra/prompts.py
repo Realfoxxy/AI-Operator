@@ -107,10 +107,13 @@ def _context_blocks(tree: str, memory: str) -> list[str]:
 
 def _plan_rules(planner_name: str, max_tasks: int, lang: str, verify_cmds, protected) -> str:
     rules = f"""KURALLAR:
-- En fazla {max_tasks} görev oluştur. Gereksiz yere parçalama; küçük bir hedef tek görev olabilir.
+- En fazla {max_tasks} görev oluştur. Gereksiz yere parçalama: küçük bir hedef (ör. tek dosyalık bir program)
+  TEK görev olmalı; kodu ve testlerini aynı görevde yazdır. Her ek görev ek maliyet demektir.
 - Görevleri ajanların güçlü yönlerine göre ata. Kendine ({planner_name}) de görev verebilirsin.
 - Bağımsız görevler paralel çalışır. Bir görev başka bir görevin çıktısına ihtiyaç duyuyorsa "depends_on" ile belirt.
 - "needs_write" yalnızca görev çalışma klasöründe dosya oluşturmayı veya değiştirmeyi gerçekten gerektiriyorsa true olsun.
+  Kod, test veya belge DOSYASI üretmesi beklenen her görevde needs_write=true olmalı (yoksa ajan dosyaya yazamaz,
+  kod yalnızca metin olarak kalır).
 - "needs_write" true ise "files" alanında görevin yazabileceği göreli yolları listele (sonu "/" ile biten giriş o klasörün altındaki her şeyi kapsar); false ise "files" boş olsun.
 - İki görev aynı dosyaya veya iç içe yollara yazmasın. Mutlak yol ve ".." kullanma.
 - Şu korumalı yollara hiçbir görev yazamaz: {", ".join(protected) if protected else "-"}
@@ -122,7 +125,9 @@ def _plan_rules(planner_name: str, max_tasks: int, lang: str, verify_cmds, prote
         names = ", ".join(c.name for c in verify_cmds)
         rules += (f"\n- Doğrulama komutları (testleri Orkestra çalıştırır, ajanlar değil): {names}. "
                   f"Bir görevden sonra çalışmasını istediğin komutların adlarını \"verify\" listesine yaz; "
-                  f"başka ad kullanma.")
+                  f"başka ad kullanma. Komutlar: " + "; ".join(f"{c.name} = {' '.join(c.argv)}" for c in verify_cmds) +
+                  ". Test yazan görevin talimatında testlerin bu komutla çalışacak biçimde yazılmasını iste "
+                  "(ör. python -m unittest için tests/test_*.py içinde unittest.TestCase).")
     else:
         rules += '\n- Tanımlı doğrulama komutu yok; "verify" listesini boş bırak.'
     return rules
@@ -238,6 +243,10 @@ def worker(goal: str, task, agents: Iterable, deps: dict, answers: list, previou
             parts.append("Yalnızca şu dosyalara yazabilirsin (sonu / ile bitenler klasörün altını kapsar): "
                          + ", ".join(task.files))
         parts.append(WRITE_GUIDE)
+    if getattr(task, "verify", None):
+        parts.append("Görevin bitince Orkestra şu doğrulama komutlarını çalıştıracak: " + ", ".join(task.verify) +
+                     ". Testleri bu komutla bulunup çalışacak şekilde yaz (python -m unittest: tests/test_*.py, "
+                     "unittest.TestCase sınıfları). Ek paket gerektirme.")
     else:
         parts.append("YAZMA İZNİ: YOK. Hiçbir dosyayı oluşturma veya değiştirme; sonucu metin olarak döndür.")
 

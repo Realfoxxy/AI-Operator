@@ -180,6 +180,17 @@ Bundan sonra şunlar olur:
 
 ---
 
+## 5b. Token ve hız: neden çok harcadı?
+
+Bir çalıştırmanın neye harcadığını görmek için terminalde **`/analiz`** yaz (komut satırında `orkestra analiz`). Rol bazında çağrı, token ve süre; en pahalı çağrılar; başarısız testlerin nedeni; dosya yazması gereken görevlerin gerçekten yazıp yazmadığı ve öneriler listelenir. İstem metinleri gösterilmez, çıktıyı paylaşabilirsin.
+
+Maliyeti düşürmek için:
+- **Basit işlerde `/hizli ac`:** Tek plan modu açılır, danışma ve denetim turları kapanır. Görev başına tek çağrı yapılır.
+- **Terminal varsayılan olarak tek plan modunda açılır.** Aşamalı mod (`/mod asamali`) yalnızca büyük projeler içindir.
+- **Önbellek tokenları ayrı gösterilir.** Claude Code her turda bağlamını önbellekten yeniden okur; bu tokenlar normal girdiden çok daha ucuzdur.
+- **Oturum sürdürme (`resume_args`) varsayılan olarak kapalıdır.** Açılırsa düzeltme turlarında token kullanımı artar.
+- **`/model claude haiku` veya `sonnet`:** Daha hızlı ve hafif modeller.
+
 ## 6. Güvenlik ağı: kontrol noktaları, fark, geri alma
 
 Her çalıştırmanın başında ve her aşamanın sonunda projenin bir kopyası (**kontrol noktası**) alınır. Bu kopyalar git ile, senin kendi `.git` deponu hiç etkilemeden, proje klasörünün dışında tutulur.
@@ -223,6 +234,7 @@ Abonelik harcamadan denemek için: `python -m orkestra --mock` (terminal) veya `
 | `/durum` · `/gorevler` · `/dosyalar` · `/kullanim` | Anlık durum |
 | `/not [@ajan] <metin>` · `/duraklat` · `/surdur` · `/durdur` | Çalışmaya müdahale |
 | `/devam [no]` · `/gecmis` · `/rapor [no]` | Yarım kalanı sürdür, geçmiş, raporlar |
+| `/analiz [no]` | Çalıştırmanın token, süre ve sorun özeti |
 | `/kontrol` · `/fark <dosya>` · `/geri-al <no>` | Kontrol noktaları |
 | `/katalog` · `/ekle <ad>` · `/cikar <ad>` · `/ajanlar` · `/ajan ac\|kapat <ad>` | Ekibi yönet (isteğe bağlı yapay zekâlar) |
 | `/hizli ac\|kapat` · `/model [ajan] [model]` | Basit işlerde hız; ajan modeli seçimi |

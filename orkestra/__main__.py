@@ -315,6 +315,24 @@ def cmd_hesap(args) -> int:
     return 0
 
 
+# ====================================================================== analiz (sürüm 0.4)
+
+def cmd_analiz(args) -> int:
+    from .analiz import analyze_run, latest_run
+    try:
+        cfg = _load_config(args)
+    except ConfigError as e:
+        _err(str(e))
+        return 2
+    run_dir = Path(args.run_klasoru).expanduser() if args.run_klasoru else latest_run(cfg.settings.runs_dir)
+    if run_dir is None or not (run_dir / "kayit.jsonl").is_file():
+        _err("Analiz edilecek çalıştırma bulunamadı.")
+        return 2
+    for ln in analyze_run(run_dir):
+        print(clean_terminal(ln))
+    return 0
+
+
 # ====================================================================== ekip yönetimi (sürüm 0.4)
 
 def cmd_ekip(args) -> int:
@@ -355,6 +373,11 @@ def build_parser() -> argparse.ArgumentParser:
         e.add_argument("args", nargs="*")
         e.add_argument("--config", help="config dosyası")
         e.set_defaults(func=cmd_ekip)
+
+    an = sub.add_parser("analiz", help="bir çalıştırmanın token, süre ve sorun özeti (varsayılan: en son)")
+    an.add_argument("run_klasoru", nargs="?", help="runs/<YYYYMMDD-HHMMSS> (boşsa en son çalıştırma)")
+    an.add_argument("--config", help="config dosyası")
+    an.set_defaults(func=cmd_analiz)
 
     h = sub.add_parser("hesap", help="Claude, Gemini ve Copilot hesaplarını bağla")
     h.add_argument("--config", help="config dosyası")

@@ -30,8 +30,10 @@ json_field = "result"
 read_only_args = ["--allowedTools", "Read,Glob,Grep"]
 write_args = ["--allowedTools", "Read,Glob,Grep,Edit,Write"]
 strengths = "planlama, mimari tasarım, karmaşık akıl yürütme, kapsamlı kod yazma ve kod inceleme, güvenlik analizi"
-resume_args = ["--resume", "{session}"]   # revizyonlarda aynı oturum sürer (ajan önceki işini hatırlar)
-session_field = "session_id"
+# Oturum sürekliliği (isteğe bağlı): revizyonlarda ajan önceki konuşmasını hatırlar ama her turda o konuşmanın
+# tamamı yeniden yüklendiği için token kullanımı belirgin artar. Açmak için iki satırın başındaki # işaretini sil.
+# resume_args = ["--resume", "{session}"]
+# session_field = "session_id"
 timeout_s = 900
 max_parallel = 1
 

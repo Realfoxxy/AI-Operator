@@ -48,6 +48,8 @@ class TerminalTests(_Env):
     def test_project_run_note_and_history(self):
         app = TerminalApp(self.cfg, mock=True, mock_speed=0)
         app.project = app._check_ws(app.project)
+        self.assertEqual(app.cfg.settings.mode, "tek")          # terminal varsayılanı: tek plan
+        app.handle("/mod asamali")
         app.handle("/proje demo")
         self.assertEqual(app.project, (self.tmp / "projeler" / "demo").resolve())
         app.handle("/bilinmeyen")
@@ -109,7 +111,7 @@ class TerminalTests(_Env):
         s = app.cfg.settings
         self.assertEqual((s.mode, s.max_consult_rounds, s.max_revisions), ("tek", 0, 0))
         app.handle("/hizli kapat")
-        self.assertEqual(s.mode, "asamali")
+        self.assertEqual((s.mode, s.max_consult_rounds, s.max_revisions), ("tek", 2, 1))   # config varsayılanları
         app.handle("/model claude sonnet")
         self.assertEqual(app.cfg.agents["claude"].command[-2:], ["--model", "sonnet"])
         self.assertEqual(app.cfg.agents["claude"].stream_command[-2:], ["--model", "sonnet"])

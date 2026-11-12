@@ -20,8 +20,6 @@ _CLAUDE_BASE = {
     "json_field": "result",
     "read_only_args": ["--allowedTools", "Read,Glob,Grep"],
     "write_args": ["--allowedTools", "Read,Glob,Grep,Edit,Write"],
-    "resume_args": ["--resume", "{session}"],
-    "session_field": "session_id",
     "timeout_s": 900,
 }
 

@@ -478,6 +478,7 @@
       const cost = usage.reduce((n, [, u]) => n + (u.maliyet_usd || 0), 0);
       $('usage').textContent = `Σ ${tok.toLocaleString('tr-TR')} token` + (cost ? ` · ≈$${cost.toFixed(2)}` : '');
       $('usage').title = usage.map(([a, u]) => `${a}: ${u.cagri} çağrı, ${(u.girdi || 0) + (u.cikti || 0)} token` +
+        (u.onbellek ? ` (+${u.onbellek} önbellekten)` : '') +
         (u.maliyet_usd ? `, ≈$${u.maliyet_usd.toFixed(2)}` : '')).join('\n') + '\n(Maliyet, CLI\'ın bildirdiği API eşdeğeri tahminidir.)';
     }
     $('elapsed').hidden = !onRun || !info.baslangic;

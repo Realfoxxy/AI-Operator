@@ -37,6 +37,7 @@ from .events import EventBus
 from .planner import PlanError
 from .security import SecurityError, clean_terminal, is_safe_id, redact, validate_layout, validate_workspace
 from .state import RUN_NAME_RE, STATE_FILE, ProjectMemory, StateError, load_state
+from .analiz import analyze_run
 from .transcript import Transcript
 
 try:                                    # POSIX'te satır düzenleme, geçmiş ve sekme tamamlama
@@ -49,7 +50,7 @@ PROJECT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 COMMANDS = ["/yardim", "/hesaplar", "/baglan", "/kur", "/test", "/proje", "/projeler", "/mod", "/butce", "/asama",
             "/sikimod", "/devretme", "/otomatik", "/dogrulama", "/durum", "/gorevler", "/dosyalar", "/fark",
             "/kontrol", "/geri-al", "/not", "/duraklat", "/surdur", "/durdur", "/devam", "/gecmis", "/rapor",
-            "/kullanim", "/ayrinti", "/hizli", "/model", "/katalog", "/ekle", "/cikar", "/ajanlar", "/ajan",
+            "/kullanim", "/ayrinti", "/hizli", "/model", "/katalog", "/ekle", "/cikar", "/ajanlar", "/ajan", "/analiz",
             "/temizle", "/cikis"]
 MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
 
@@ -67,6 +68,7 @@ KOMUTLAR  (düz metin yazarsan: boştayken yeni hedef olur, çalışma sürerken
  Proje         /proje [ad|yol]           Proje seç veya oluştur (ad: proje kökünde alt klasör)
                /projeler                 Projeleri listele
                /gecmis   /rapor [no]     Bu projedeki çalıştırmalar ve raporları
+               /analiz [no]              Çalıştırma neden pahalı/yavaştı? Token, süre ve sorun özeti
                /devam [no]               Yarım kalan çalıştırmayı kaldığı yerden sürdür
  Ayarlar       /mod tek|asamali          Tek plan veya aşamalı (büyük projeler) mod
                /butce <n>   /asama <n>   Çağrı bütçesi, en fazla aşama
@@ -448,7 +450,7 @@ class TerminalApp:
         self.state_path = user_config_dir() / "terminal.json"
         self.projects_root = cfg.settings.workspace.expanduser().resolve()
         self.project = self._load_project()
-        self.cfg.settings.mode = "asamali"          # terminal büyük projeler için aşamalı modda başlar
+        # Mod config'ten gelir (varsayılan "tek"): basit işler aşama planlaması ödemez. Büyük projeler: /mod asamali
         self._quit = False
 
     # -------------------------------------------------------------- durum dosyası ve proje
@@ -1071,8 +1073,9 @@ class TerminalApp:
         parts = []
         for name, u in orch.usage.items():
             cost = f", ≈${u['maliyet_usd']:.2f}" if u.get("maliyet_usd") else ""
-            parts.append(f"{name} {u['cagri']} çağrı / {u['girdi'] + u['cikti']:,} token{cost}".replace(",", "."))
-        self.out.line("Kullanım: " + " · ".join(parts), "dim")
+            cache = f" (+{u.get('onbellek', 0):,} önbellek)" if u.get("onbellek") else ""
+            parts.append(f"{name} {u['cagri']} çağrı / {u['girdi'] + u['cikti']:,} token{cache}{cost}".replace(",", "."))
+        self.out.line("Kullanım: " + " · ".join(parts) + "   (ayrıntı: /analiz)", "dim")
 
     def cmd_kullanim(self, args=None) -> None:
         r = self._current()
@@ -1149,6 +1152,19 @@ class TerminalApp:
         except (ValueError, IndexError):
             self.out.line("Geçersiz numara. /gecmis ile listele.", "yellow")
             return None
+
+    def cmd_analiz(self, args=None) -> None:
+        picked = self._pick_run(args or [])
+        if not picked:
+            return
+        try:
+            lines = analyze_run(picked[0])
+        except OSError as e:
+            self.out.line(f"✖ Kayıt okunamadı: {e}", "red")
+            return
+        for ln in lines:
+            self.out.line(ln, model=True)
+        self.out.line("  (İstem ve yanıt metinleri gösterilmez; bu çıktıyı güvenle paylaşabilirsin.)", "dim")
 
     def cmd_rapor(self, args=None) -> None:
         picked = self._pick_run(args or [])

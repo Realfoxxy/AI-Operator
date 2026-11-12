@@ -11,6 +11,7 @@ import os
 import re
 import secrets
 import shutil
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -99,7 +100,9 @@ async def run_verify(cmd: VerifyCommand, workspace: Path, passthrough, *, sandbo
         if argv is None:
             return result(None, "Docker bulunamadı; [verify] sandbox = \"docker\" için Docker kurulu olmalı.", False)
     else:
-        exe = shutil.which(cmd.argv[0])
+        # 'python'/'python3'/'py' ile başlayan komutlar Orkestra'yı çalıştıran yorumlayıcıyla yürütülür: Windows'ta
+        # 'python' eski bir sürüme (ör. Visual Studio'nun 3.9'u), Store kısayoluna veya hiçbir şeye gidebilir.
+        exe = sys.executable if cmd.argv[0] in ("python", "python3", "py") and sys.executable else shutil.which(cmd.argv[0])
         if not exe:
             return result(None, f"'{cmd.argv[0]}' programı bulunamadı.", False)
         argv = [exe, *cmd.argv[1:]]

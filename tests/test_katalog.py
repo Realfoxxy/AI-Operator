@@ -152,7 +152,7 @@ class OllamaAgentTests(unittest.TestCase):
         out = asyncio.run(OllamaAgent(self.cfg).run("soru", write=False, workdir=Path("."), tag="t1-1",
                                                     on_chunk=chunks.append, meta=meta))
         self.assertEqual(out, "Yerel yanıt.")
-        self.assertEqual(meta["usage"], {"girdi": 12, "cikti": 3, "maliyet_usd": None})
+        self.assertEqual(meta["usage"], {"girdi": 12, "cikti": 3, "onbellek": 0, "maliyet_usd": None})
         self.assertEqual(chunks, ["  Yerel yanıt.  "])
 
     def test_write_refused_and_server_down(self):

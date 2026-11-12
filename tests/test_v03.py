@@ -153,9 +153,10 @@ class SessionAndUsageTests(unittest.TestCase):
     def test_usage_from_cli_json(self):
         claude = {"result": "x", "session_id": "0f6c2a9e-1111-2222-3333-444455556666", "total_cost_usd": 0.0123,
                   "usage": {"input_tokens": 10, "cache_read_input_tokens": 90, "output_tokens": 5}}
-        self.assertEqual(usage_from(claude), {"girdi": 100, "cikti": 5, "maliyet_usd": 0.0123})
+        # Önbellekten okunan tokenlar ayrı sayılır (girdiye eklenmez)
+        self.assertEqual(usage_from(claude), {"girdi": 10, "cikti": 5, "onbellek": 90, "maliyet_usd": 0.0123})
         gemini = {"response": "x", "stats": {"models": {"gemini-2.5-pro": {"tokens": {"prompt": 7, "candidates": 3}}}}}
-        self.assertEqual(usage_from(gemini), {"girdi": 7, "cikti": 3, "maliyet_usd": None})
+        self.assertEqual(usage_from(gemini), {"girdi": 7, "cikti": 3, "onbellek": 0, "maliyet_usd": None})
         self.assertIsNone(usage_from({"result": "x"}))
 
     def test_engine_resumes_session_on_revision(self):
@@ -167,7 +168,12 @@ class SessionAndUsageTests(unittest.TestCase):
                     Reviser.reviews += 1
                     return '{"verdict": "revise", "feedback": "Eksik."}'
                 return await super().run(prompt, **kw)
-        h = Harness(self, cls=Reviser)
+        from orkestra.config import load_config
+        from tests.helpers import ROOT
+        cfg = load_config(ROOT / "config.toml")
+        self.assertEqual(cfg.agents["claude"].resume_args, [])           # varsayılan: kapalı (token tasarrufu)
+        cfg.agents["claude"].resume_args, cfg.agents["claude"].session_field = ["--resume", "{session}"], "session_id"
+        h = Harness(self, cls=Reviser, cfg=cfg)
         asyncio.run(h.orch.run("deneme"))
         resumed = [e for e in h.of("yanit") if e["rol"] == "işçi" and e.get("devam_oturumu")]
         self.assertTrue(resumed, "revizyonda oturum sürdürülmedi")

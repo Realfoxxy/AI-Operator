@@ -76,6 +76,17 @@ class TaskResult:
     uyarilar: list[str] = field(default_factory=list)
 
 
+def verify_hint(r) -> str:
+    """Sık görülen doğrulama hatalarına ajan için açık yönlendirme ekler."""
+    out = r.output or ""
+    if "NO TESTS RAN" in out or "Ran 0 tests" in out:
+        return ("\nİPUCU: Hiç test bulunamadı. Bu komut Python'un unittest modülüdür: testleri tests/ altındaki "
+                "test_*.py dosyalarında, unittest.TestCase sınıflarında yaz (pytest tarzı düz fonksiyonlar bulunmaz).")
+    if "programı bulunamadı" in out:
+        return "\nİPUCU: Komut bu bilgisayarda bulunamadı; bu bir ortam sorunudur, kodla ilgili değildir."
+    return ""
+
+
 def strip_asks(text: str) -> str:
     """Tüm SOR bloklarını kaldırır."""
     return ASK_RE.sub("", text or "").strip()
@@ -197,6 +208,7 @@ class Orchestrator:
         self._issues: list[str] = []
         self._consult_seq = 0
         self._budget_hit = False
+        self._task_wrote: set[str] = set()                    # gerçekten dosya değiştiren yazma görevleri
 
         # Sürüm 0.3
         self._rw = RWLock()                                   # sıkı mod
@@ -430,21 +442,22 @@ class Orchestrator:
         self.emit("yanit", no=n, ajan=agent_name, rol=role, gorev=tag, metin=out, devam_oturumu=bool(session))
         if session_key and meta.get("session"):
             self._sessions[session_key] = meta["session"]
-        self._record_usage(agent_name, meta.get("usage"))
+        self._record_usage(agent_name, meta.get("usage"), n)
         self._emit_budget()
         if report is not None:
             await self._handle_report(report)
         return out
 
-    def _record_usage(self, agent: str, usage: dict | None) -> None:
-        tot = self.usage.setdefault(agent, {"girdi": 0, "cikti": 0, "maliyet_usd": 0.0, "cagri": 0})
+    def _record_usage(self, agent: str, usage: dict | None, no: int = 0) -> None:
+        tot = self.usage.setdefault(agent, {"girdi": 0, "cikti": 0, "onbellek": 0, "maliyet_usd": 0.0, "cagri": 0})
         tot["cagri"] += 1
         if usage:
             tot["girdi"] += usage.get("girdi") or 0
             tot["cikti"] += usage.get("cikti") or 0
+            tot["onbellek"] += usage.get("onbellek") or 0
             if usage.get("maliyet_usd") is not None:
                 tot["maliyet_usd"] = round(tot["maliyet_usd"] + usage["maliyet_usd"], 6)
-        self.emit("kullanim", ajan=agent, son=usage or {}, toplam={k: dict(v) for k, v in self.usage.items()})
+        self.emit("kullanim", no=no, ajan=agent, son=usage or {}, toplam={k: dict(v) for k, v in self.usage.items()})
 
     # ================================================================== 6. Değişiklik raporu ve ihlaller
 
@@ -456,6 +469,7 @@ class Orchestrator:
                       silinen=ch.removed[:MAX_EVENT_PATHS], bildirilmemis=report.unreported[:MAX_EVENT_PATHS])
             w = report.writer
             if w is not None and w.files is not None:     # ajan yazma çağrısı (doğrulama değil)
+                self._task_wrote.add(w.task)
                 for path in ch.added + ch.modified:
                     self._phase_files[path] = (w.task, w.agent)
                 for path in ch.removed:
@@ -608,17 +622,27 @@ class Orchestrator:
                 self._task_status(task, "dogrulamada")
                 vres = await self._run_verifications(task, warnings)
             failed = [r for r in vres if not r.ok]
-            if failed and used < s.max_revisions:
-                # Doğrulama başarısız: denetçiye sorulmadan otomatik revizyon (bir hak harcar).
+            # Yazma görevi hiç dosya değiştirmediyse (kod yalnızca metin olarak döndüyse) bu da bir eksiktir.
+            no_write = task.needs_write and task.id not in self._task_wrote
+            if (failed or no_write) and used < s.max_revisions:
+                # Doğrulama başarısız veya dosya yazılmadı: denetçiye sorulmadan otomatik revizyon (bir hak harcar).
                 used += 1
-                feedback = "Doğrulama komutları başarısız oldu; hataları düzelt.\n\n" + "\n\n".join(
-                    f"$ {r.name} (çıkış kodu {r.exit_code})\n{r.output[-3000:]}" for r in failed)
+                parts = []
+                if no_write:
+                    parts.append("Hiçbir dosya oluşturmadın veya değiştirmedin. Kodu yanıtına yazmak yetmez: "
+                                 "şu dosyalara gerçekten yaz: " + ", ".join(task.files))
+                if failed:
+                    parts.append("Doğrulama komutları başarısız oldu; hataları düzelt.\n\n" + "\n\n".join(
+                        f"$ {r.name} (çıkış kodu {r.exit_code})\n{r.output[-3000:]}{verify_hint(r)}" for r in failed))
+                feedback = "\n\n".join(parts)
                 self.emit("denetim", gorev=task.id, karar="revise", geri_bildirim=feedback, otomatik=True)
                 self._task_status(task, "calisiyor")
                 output = await self.work(task, goal, deps, feedback=feedback, previous=output)
                 continue
             if failed:
                 warnings.append("Doğrulama başarısız: " + ", ".join(r.name for r in failed))
+            if no_write:
+                warnings.append("Görev dosya yazmadı; kod yalnızca raporda olabilir")
             if not s.reviewer or used >= s.max_revisions:
                 break
             self._task_status(task, "denetimde")
