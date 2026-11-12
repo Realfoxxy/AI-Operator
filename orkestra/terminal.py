@@ -754,7 +754,7 @@ class TerminalApp:
             return
         self.out.line(f"  {name} deneniyor…", "dim")
         ok, msg = accounts.probe_sync(self.cfg.agents[name], self.project)
-        self.out.line(f"  {'✔' if ok else '✖'} {name}: {msg[:200]}", "green" if ok else "red", model=True)
+        self.out.line(f"  {'✔' if ok else '✖'} {name}: {msg[:400]}", "green" if ok else "red", model=True)
 
     # -------------------------------------------------------------- proje
 

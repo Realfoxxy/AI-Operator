@@ -144,7 +144,8 @@ def analyze_run(run_dir: Path) -> list[str]:
                     "Orkestra'nın son sürümüne güncelle (git pull); 'python' komutları artık doğru yorumlayıcıyla çalışır.")
     if any("NO TESTS RAN" in (v.get("cikti") or "") or "Ran 0 tests" in (v.get("cikti") or "") for v in verifs):
         tips.append("Doğrulama hiç test bulamamış: testler unittest biçiminde değil (ör. pytest tarzı). "
-                    "Son sürümde ajanlara bu açıkça söyleniyor.")
+                    "Bir diğer sık neden: tests/__init__.py yok (o olmadan tests/ klasörü taranmaz). "
+                    "Son sürümde ajanlara ikisi de açıkça söyleniyor.")
     if cancelled:
         tips.append(f"Çalıştırma iptal edildi: {cancelled[:120]}")
     if any(changes.get(t, 0) == 0 and results.get(t, {}).get("durum") == "tamam" for t in write_tasks):

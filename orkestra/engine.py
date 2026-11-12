@@ -81,7 +81,8 @@ def verify_hint(r) -> str:
     out = r.output or ""
     if "NO TESTS RAN" in out or "Ran 0 tests" in out:
         return ("\nİPUCU: Hiç test bulunamadı. Bu komut Python'un unittest modülüdür: testleri tests/ altındaki "
-                "test_*.py dosyalarında, unittest.TestCase sınıflarında yaz (pytest tarzı düz fonksiyonlar bulunmaz).")
+                "test_*.py dosyalarında, unittest.TestCase sınıflarında yaz (pytest tarzı düz fonksiyonlar bulunmaz) "
+                "ve tests/__init__.py adlı boş bir dosya oluştur; o yoksa tests/ klasörü hiç taranmaz.")
     if "programı bulunamadı" in out:
         return "\nİPUCU: Komut bu bilgisayarda bulunamadı; bu bir ortam sorunudur, kodla ilgili değildir."
     return ""

@@ -122,10 +122,24 @@ def _text(obj: dict, key: str, where: str) -> str:
     return v.strip()[: LIMITS[key]]
 
 
+AUTO_TEST = "python-test"
+
+
+def _is_py_test(path: str) -> bool:
+    """Python test dosyası (test_*.py, *_test.py) veya tests/ klasörü mü?"""
+    parts = path.strip("/").split("/")
+    name = parts[-1]
+    if name == "tests":                       # klasörün tamamı (ör. "tests/")
+        return True
+    return name.endswith(".py") and (name.startswith("test_") or name.endswith("_test.py") or "tests" in parts[:-1])
+
+
 def parse_plan(text: str, agent_names, max_tasks: int, *, verify_names=(), protected=(),
                phased: bool = False, writers=None) -> Plan:
-    """writers: dosya yazabilen ajanlar (None = hepsi). Yazamayan ajana yazma görevi verilemez."""
-    """Planlayıcı çıktısını sıkı biçimde doğrular ve Plan döndürür."""
+    """Planlayıcı çıktısını sıkı biçimde doğrular ve Plan döndürür.
+
+    writers: dosya yazabilen ajanlar (None = hepsi). Yazamayan ajana yazma görevi verilemez.
+    """
     data = extract_json(text)
     if not isinstance(data, dict):
         raise PlanError("Plan kökü bir JSON nesnesi olmalı.")
@@ -183,6 +197,9 @@ def parse_plan(text: str, agent_names, max_tasks: int, *, verify_names=(), prote
         for v in verify:
             if v not in verify_names:
                 raise PlanError(f"{where}: bilinmeyen doğrulama komutu: {v[:50]!r}")
+        if needs_write and not verify and AUTO_TEST in verify_names and any(_is_py_test(f) for f in files):
+            # Güvenlik ağı: Python testi yazan görev doğrulamasız planlandıysa testler yine de çalıştırılır.
+            verify = [AUTO_TEST]
         tasks.append(Task(
             id=tid,
             title=_text(raw, "title", where),

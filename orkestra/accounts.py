@@ -138,7 +138,7 @@ def login(acfg: AgentConfig, workspace: Path) -> int:
     return subprocess.run(argv, cwd=str(workspace), check=False).returncode
 
 
-async def probe(acfg: AgentConfig, workspace: Path, timeout_s: int = 180) -> tuple[bool, str]:
+async def probe(acfg: AgentConfig, workspace: Path, timeout_s: int = 120) -> tuple[bool, str]:
     """Küçük bir istemle bağlantıyı dener (aboneliğinden çok küçük bir kullanım harcar)."""
     test_cfg = AgentConfig(**{**acfg.__dict__, "timeout_s": min(acfg.timeout_s, timeout_s), "stream_format": "none",
                               "resume_args": []})
@@ -146,6 +146,10 @@ async def probe(acfg: AgentConfig, workspace: Path, timeout_s: int = 180) -> tup
         out = await make_agent(test_cfg).run(PROBE_PROMPT, write=False, workdir=Path(workspace), tag="baglanti-testi")
     except (AgentError, SecurityError, OSError) as e:
         msg = redact(str(e))
+        if "yanıt vermedi" in msg:
+            msg += (f" Program büyük olasılıkla bir şey bekliyor (ilk açılışta güncelleme, giriş veya klasör onayı). "
+                    f"Proje klasöründe '{acfg.command[0]}' komutunu kendin bir kez çalıştırıp çıkan soruları yanıtla, "
+                    f"sonra /test komutunu tekrarla.")
         save_status(acfg.name, False, msg)
         return False, msg
     ok = bool(out.strip())

@@ -127,7 +127,8 @@ def _plan_rules(planner_name: str, max_tasks: int, lang: str, verify_cmds, prote
                   f"Bir görevden sonra çalışmasını istediğin komutların adlarını \"verify\" listesine yaz; "
                   f"başka ad kullanma. Komutlar: " + "; ".join(f"{c.name} = {' '.join(c.argv)}" for c in verify_cmds) +
                   ". Test yazan görevin talimatında testlerin bu komutla çalışacak biçimde yazılmasını iste "
-                  "(ör. python -m unittest için tests/test_*.py içinde unittest.TestCase).")
+                  "(ör. python -m unittest için tests/test_*.py içinde unittest.TestCase; tests/__init__.py boş dosyası "
+                  "ŞART, yoksa testler bulunamaz; onu da o görevin \"files\" listesine ekle).")
     else:
         rules += '\n- Tanımlı doğrulama komutu yok; "verify" listesini boş bırak.'
     return rules
@@ -246,7 +247,8 @@ def worker(goal: str, task, agents: Iterable, deps: dict, answers: list, previou
     if getattr(task, "verify", None):
         parts.append("Görevin bitince Orkestra şu doğrulama komutlarını çalıştıracak: " + ", ".join(task.verify) +
                      ". Testleri bu komutla bulunup çalışacak şekilde yaz (python -m unittest: tests/test_*.py, "
-                     "unittest.TestCase sınıfları). Ek paket gerektirme.")
+                     "unittest.TestCase sınıfları, ve boş bir tests/__init__.py dosyası; o olmadan testler "
+                     "bulunamaz). Ek paket gerektirme.")
     else:
         parts.append("YAZMA İZNİ: YOK. Hiçbir dosyayı oluşturma veya değiştirme; sonucu metin olarak döndür.")
 

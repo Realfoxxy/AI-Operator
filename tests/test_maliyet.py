@@ -69,6 +69,34 @@ class ReliabilityTests(unittest.TestCase):
         self.assertTrue(all("no" in e for e in h.of("kullanim")))
 
 
+class AutoTestVerifyTests(unittest.TestCase):
+    def _plan(self, files, verify=None):
+        t = {"id": "t1", "title": "T", "assignee": "claude", "instructions": "Yap.", "expected_output": "Ç.",
+             "needs_write": True, "files": files}
+        if verify is not None:
+            t["verify"] = verify
+        return json.dumps({"summary": "s", "tasks": [t]})
+
+    def test_test_writing_task_gets_python_test(self):
+        from orkestra.planner import parse_plan
+        names = ["python-test", "npm-test"]
+        for files, want in ((["calc.py", "tests/test_calc.py"], ["python-test"]),
+                            (["tests/"], ["python-test"]),
+                            (["calc.py"], []),
+                            (["test/app.js"], [])):
+            with self.subTest(files):
+                plan = parse_plan(self._plan(files), ["claude"], 8, verify_names=names)
+                self.assertEqual(plan.tasks[0].verify, want)
+        plan = parse_plan(self._plan(["tests/test_a.py"], ["npm-test"]), ["claude"], 8, verify_names=names)
+        self.assertEqual(plan.tasks[0].verify, ["npm-test"])          # planlayıcının seçimine dokunulmaz
+        plan = parse_plan(self._plan(["tests/test_a.py"]), ["claude"], 8, verify_names=["npm-test"])
+        self.assertEqual(plan.tasks[0].verify, [])                    # python-test tanımlı değilse eklenmez
+
+    def test_guidance_mentions_init_file(self):
+        r = VerifyResult("python-test", 5, 0.1, "Ran 0 tests\n\nNO TESTS RAN", False)
+        self.assertIn("tests/__init__.py", verify_hint(r))
+
+
 class AnalysisTests(unittest.TestCase):
     def test_analyze_run_summary(self):
         from orkestra.analiz import analyze_run
