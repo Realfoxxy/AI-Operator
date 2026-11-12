@@ -39,6 +39,18 @@ def redact(text: str) -> str:
     return _KEY_VALUE.sub(lambda m: f"{m.group(1)}{m.group(2)}{MASK}", text)
 
 
+_TERM_UNSAFE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+def clean_terminal(text: str) -> str:
+    """Konsola basılacak metinden kontrol karakterlerini (ANSI/OSC kaçış dizileri dahil) çıkarır.
+
+    Model çıktısı terminale olduğu gibi basılırsa kaçış dizileriyle başlık değiştirme, panoya
+    yazma veya ekranı gizleme yapılabilir. Satır sonu ve sekme korunur.
+    """
+    return _TERM_UNSAFE.sub("", text or "")
+
+
 def is_safe_id(value: str) -> bool:
     """Görev ve ajan kimlikleri için güvenli kimlik kontrolü."""
     return isinstance(value, str) and bool(_SAFE_ID.match(value))

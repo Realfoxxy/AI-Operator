@@ -18,7 +18,7 @@ from .config import Config, ConfigError, default_config_path, load_config
 from .engine import BudgetExceeded, Orchestrator, RunCancelled, RunStopped
 from .events import ConsolePrinter, EventBus
 from .planner import PlanError
-from .security import SecurityError, redact, validate_layout, validate_workspace
+from .security import SecurityError, clean_terminal, redact, validate_layout, validate_workspace
 from .state import ProjectMemory, StateError, load_state
 from .transcript import Transcript
 
@@ -35,7 +35,7 @@ def _setup_stdio() -> None:
 
 
 def _err(msg: str) -> None:
-    print(f"Hata: {redact(msg)}", file=sys.stderr)
+    print(f"Hata: {clean_terminal(redact(msg))}", file=sys.stderr)
 
 
 # ====================================================================== yardımcılar
@@ -99,7 +99,7 @@ def _execute(orch: Orchestrator, goal: str, bus: EventBus, settings_max_calls: i
             print(f"Durum kaydedildi. Sürdürmek için: python -m orkestra devam {orch.run_dir}", file=sys.stderr)
         return 130
     print("\n=== SONUÇ RAPORU ===\n")
-    print(redact(report))
+    print(clean_terminal(redact(report)))
     print(f"\nToplam model çağrısı: {orch.calls}/{settings_max_calls}")
     if orch.run_dir:
         print(f"Rapor: {orch.run_dir / 'sonuc.md'}")

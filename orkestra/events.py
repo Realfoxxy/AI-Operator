@@ -12,7 +12,7 @@ from collections import deque
 from datetime import datetime
 from typing import Callable
 
-from .security import redact
+from .security import clean_terminal, redact
 
 BUFFER_SIZE = 5000
 QUEUE_SIZE = 1000
@@ -125,7 +125,9 @@ class ConsolePrinter:
 
     def __init__(self, agent_displays: dict[str, str], out: Callable[[str], None] = print):
         self.displays = agent_displays
-        self.out = out
+        self._raw_out = out
+        # Model kaynaklı metinler terminale basılmadan önce kontrol karakterlerinden arındırılır.
+        self.out = lambda text: self._raw_out(clean_terminal(text))
 
     def __call__(self, ev: dict, persist: bool) -> None:
         fn = getattr(self, "_" + ev["tur"], None)

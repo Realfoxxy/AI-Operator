@@ -53,7 +53,7 @@ class EnvFilterTests(unittest.TestCase):
         env = {"MY_API_KEY": "gizli-deger", "GITHUB_PAT": "x", "ORKESTRA_DENEME": "1"}
         with mock.patch.dict(os.environ, env):
             self.assertNotIn("MY_API_KEY", filter_env(["PATH", "MY_API_KEY"]))
-            res = asyncio.run(run_verify(cmd, ws, ["PATH", "MY_API_KEY", "GITHUB_PAT", "HOME"]))
+            res = asyncio.run(run_verify(cmd, ws, ["PATH", "SYSTEMROOT", "MY_API_KEY", "GITHUB_PAT", "HOME"]))
         self.assertTrue(res.ok, res.output)
         names = json.loads(res.output.strip().splitlines()[-1])
         self.assertIn("PATH", names)
@@ -65,11 +65,11 @@ class EnvFilterTests(unittest.TestCase):
         ws = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, ws, ignore_errors=True)
         slow = VerifyCommand("yavas", [sys.executable, "-c", "import time; time.sleep(30)"], 1)
-        res = asyncio.run(run_verify(slow, ws, ["PATH"]))
+        res = asyncio.run(run_verify(slow, ws, ["PATH", "SYSTEMROOT"]))
         self.assertFalse(res.ok)
         self.assertIsNone(res.exit_code)
         self.assertIn("Zaman aşımı", res.output)
-        missing = asyncio.run(run_verify(VerifyCommand("yok", ["olmayan-program-xyz"], 10), ws, ["PATH"]))
+        missing = asyncio.run(run_verify(VerifyCommand("yok", ["olmayan-program-xyz"], 10), ws, ["PATH", "SYSTEMROOT"]))
         self.assertFalse(missing.ok)
 
 

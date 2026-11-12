@@ -1288,3 +1288,24 @@ Kontrol listesi:
 **README için kısa tanıtım önerisi:**
 
 > **Orkestra** — Claude, Gemini ve GitHub Copilot'u tek bir ekip gibi çalıştıran çok-ajanlı orkestratör. Claude planlar ve denetler; görevler paralel dağıtılır; ajanlar birbirine danışır. Resmi CLI araçlarını kullandığı için mevcut aboneliklerinle çalışır. Ajanların çalışmasını canlı izleyebileceğin görsel bir çalışma alanı ve büyük uygulamalar için aşamalı planlama içerir. Saf Python, sıfır bağımlılık, güvenlik öncelikli tasarım. Ayrıntılar için [DOKUMANTASYON.md](DOKUMANTASYON.md).
+
+---
+
+## 16. Uygulama Notları (v0.2.0)
+
+Bu bölüm, şartnamenin açık bıraktığı veya uygulamada netleştirilmesi gereken noktaları kaydeder.
+
+| Konu | Karar |
+|---|---|
+| `onay_istegi` olayı | Olay sözlüğünde `tur` anahtarı olay türüne ayrıldığı için istek türü **`istek_turu`** alanında taşınır (`plan` \| `baslangic_uyarisi` \| `ihlal`). |
+| Ortam süzme (`PAT`) | `TOKEN`, `KEY`, `SECRET`, `PASSWORD`, `CREDENTIAL` alt dize olarak aranır; `PAT` ise `PATH`/`PATHEXT` elenmesin diye ayrı bir sözcük olarak aranır (ör. `GITHUB_PAT`). |
+| Doğrulamalı planlar | Doğrulama komutu çalıştıracak planlar da kod çalıştırdığı için `--yes` ile otomatik onaylanmaz. |
+| Bütçe ve aşama | Bütçe dolduğunda aşama "bitti" sayılmaz; `devam` aynı aşamanın kalan görevlerini çalıştırır. |
+| Proje hafızası | Markdown'a ek olarak yapılandırılmış hali `.orkestra/proje_hafizasi.json` dosyasında tutulur (ikisi de korumalı). |
+| Doğrulama ve değişiklik denetimi | Doğrulama komutları yazma kilidiyle çalışır; ürettikleri dosyalar ajana atfedilmez ama korumalı yollardaki değişiklikler yine ihlaldir. |
+| Yol normalizasyonu | `files` ve korumalı yollarda `:` (Windows alternatif veri akışları), kontrol karakterleri ve sonu nokta/boşlukla biten bileşenler reddedilir. |
+| Terminal güvenliği | Konsola basılan model metinlerinden kontrol karakterleri (ANSI/OSC kaçış dizileri) çıkarılır. |
+| Sahte planlayıcı | `MockAgent` planlayıcı rolünde de kısa bir "düşünme" süresinden sonra parça akıtır (kabul kriteri: planlayıcı masası "düşünüyor → yazıyor"). `hiz=0` iken beklemesizdir. |
+| Sürdürmede `baslangic` | Web arayüzünden sürdürmede `baslangic` olayı `devam: true` ile yeniden yayınlanır; açık arayüzler görünümlerini sıfırlar. |
+| Config arama sırası | `--config` → `ORKESTRA_CONFIG` → paketin bir üstündeki `config.toml` → kullanıcı config klasörü (pip/pipx kurulumunda ilk çalıştırmada `orkestra/varsayilan_config.toml` kopyalanır, çalışma klasörü `~/orkestra-calisma`). |
+| Sunucu sınırları | En fazla 16 eşzamanlı SSE bağlantısı; soket zaman aşımı 60 sn; istek satırları loglanmaz (token içerebilir). |

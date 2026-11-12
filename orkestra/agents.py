@@ -14,6 +14,7 @@ from typing import Callable
 
 OnChunk = Callable[[str], None] | None
 STDERR_LIMIT = 64 * 1024
+LINE_LIMIT = 8 * 1024 * 1024      # tek bir JSON satırı için üst sınır (bellek koruması)
 
 from .config import AgentConfig
 from .security import SecurityError, check_argv, make_private_dir, redact
@@ -122,6 +123,7 @@ class CliAgent(Agent):
         emit = on_chunk or (lambda _t: None)
         err_buf = bytearray()
         out_parts: list[str] = []
+        sum_len = [0]
         state = {"result": None, "is_error": False, "texts": []}
 
         async def feed():
@@ -150,10 +152,15 @@ class CliAgent(Agent):
                 text = dec.decode(chunk, final=not chunk)
                 if cfg.stream_format == "text":
                     if text:
-                        out_parts.append(text)
+                        # Bellek koruması: max_output_chars'ın iki katından fazlası tutulmaz (sonradan kesilir).
+                        if sum_len[0] < cfg.max_output_chars * 2:
+                            out_parts.append(text)
+                            sum_len[0] += len(text)
                         emit(text)
                 else:
                     pending += text
+                    if len(pending) > LINE_LIMIT and "\n" not in pending:
+                        pending = ""          # satır sonu gelmeyen dev satır atılır
                     *lines, pending = pending.split("\n")
                     if not chunk:
                         lines.append(pending)
@@ -213,7 +220,9 @@ class CliAgent(Agent):
                 return
             text = obj.get("content") if isinstance(obj.get("content"), str) else obj.get("text")
             if isinstance(text, str) and text:
-                state["texts"].append(text)
+                state["size"] = state.get("size", 0) + len(text)
+                if state["size"] <= self.cfg.max_output_chars * 2:   # bellek koruması
+                    state["texts"].append(text)
                 emit(text)
 
     def _extract(self, text: str) -> str:

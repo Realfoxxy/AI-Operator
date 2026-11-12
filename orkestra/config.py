@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import tomllib
 from dataclasses import dataclass, field, fields
@@ -188,7 +189,8 @@ def _parse_settings(raw: dict, base: Path) -> Settings:
         s.max_phases = _int(raw["max_phases"], w("max_phases"), minimum=1)
     if "dep_output_chars" in raw:
         s.dep_output_chars = _int(raw["dep_output_chars"], w("dep_output_chars"), minimum=1000)
-    # Göreli yollar config dosyasının klasörüne göre çözülür.
+    # '~' ev dizinine açılır; göreli yollar config dosyasının klasörüne göre çözülür.
+    s.workspace, s.runs_dir = s.workspace.expanduser(), s.runs_dir.expanduser()
     if not s.workspace.is_absolute():
         s.workspace = (base / s.workspace).resolve()
     if not s.runs_dir.is_absolute():
@@ -261,6 +263,9 @@ def normalize_rel_path(value: str) -> str | None:
     """Göreli yolu '/' ayraçlı biçime getirir; güvensizse None döndürür.
 
     Mutlak yol, sürücü harfi, '..' veya '.' bileşeni ve boş bileşen reddedilir.
+    Ayrıca ':' (Windows alternatif veri akışları, ör. CLAUDE.md::$DATA), kontrol karakterleri ve
+    sonu nokta/boşlukla biten bileşenler (Windows bunları siler: 'CLAUDE.md.' == 'CLAUDE.md')
+    reddedilir; aksi halde korumalı yol denetimi atlatılabilirdi.
     Sondaki '/' korunur (klasörün altındaki her şeyi kapsar).
     """
     if not isinstance(value, str):
@@ -272,6 +277,10 @@ def normalize_rel_path(value: str) -> str | None:
     body = v[:-1] if is_dir else v
     parts = body.split("/")
     if not body or any(p in ("", ".", "..") for p in parts):
+        return None
+    if ":" in v or any(ord(c) < 32 or ord(c) == 127 for c in v):
+        return None
+    if any(p != p.rstrip(". ") for p in parts):
         return None
     return body + ("/" if is_dir else "")
 
@@ -390,6 +399,35 @@ def load_config(path: Path) -> Config:
     )
 
 
+PACKAGED_DEFAULT = Path(__file__).resolve().parent / "varsayilan_config.toml"
+
+
+def user_config_dir() -> Path:
+    """pip/pipx ile kurulumda kullanıcı config klasörü."""
+    if os.name == "nt":
+        return Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming") / "Orkestra"
+    return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "orkestra"
+
+
 def default_config_path() -> Path:
-    """Paket klasörünün bir üstündeki config.toml."""
-    return Path(__file__).resolve().parent.parent / "config.toml"
+    """Varsayılan config dosyasını bulur.
+
+    Sıra: ORKESTRA_CONFIG ortam değişkeni → paket klasörünün bir üstündeki config.toml (depodan
+    çalıştırma, bölüm 5) → kullanıcı config klasörü (pip/pipx kurulumu). Son durumda dosya yoksa
+    paketteki varsayılandan oluşturulur; çalışma klasörü ~/orkestra-calisma olur.
+    """
+    env = os.environ.get("ORKESTRA_CONFIG")
+    if env:
+        return Path(env).expanduser()
+    repo = Path(__file__).resolve().parent.parent / "config.toml"
+    if repo.is_file():
+        return repo
+    target = user_config_dir() / "config.toml"
+    if not target.exists() and PACKAGED_DEFAULT.is_file():
+        text = PACKAGED_DEFAULT.read_text(encoding="utf-8").replace(
+            'workspace = "../orkestra-calisma"', 'workspace = "~/orkestra-calisma"')
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if os.name != "nt":
+            os.chmod(target.parent, 0o700)
+        target.write_text(text, encoding="utf-8")
+    return target

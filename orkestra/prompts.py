@@ -7,6 +7,7 @@ talimat olarak verilir; başka ajanlardan gelen her metin data_block ile sarıl�
 from __future__ import annotations
 
 import json
+import re
 from typing import Iterable
 
 ROLE_PLANNER = "<<ROL:PLANLAYICI>>"
@@ -50,12 +51,16 @@ REVIEW_SCHEMA = '{"verdict": "approve" | "revise", "feedback": "kısa ve somut g
 
 # ---------------------------------------------------------------- ortak yardımcılar
 
+_CLOSE_RE = re.compile(r"</(veri)", re.I)
+_ASK_OPEN_RE = re.compile(r"<<(SOR)", re.I)
+_ASK_CLOSE_RE = re.compile(r"<</(SOR)>>", re.I)
+
+
 def _escape(text: str) -> str:
-    return (
-        text.replace("</veri", "<\\/veri")
-        .replace("<</SOR>>", "<<\\/SOR>>")
-        .replace("<<SOR", "<<\\SOR")
-    )
+    # Büyük/küçük harfe duyarsız: '</VERI>' de bloğu kapatamaz.
+    text = _CLOSE_RE.sub(lambda m: "<\\/" + m.group(1), text)
+    text = _ASK_CLOSE_RE.sub(lambda m: "<<\\/" + m.group(1) + ">>", text)
+    return _ASK_OPEN_RE.sub(lambda m: "<<\\" + m.group(1), text)
 
 
 def _attr(value: str) -> str:

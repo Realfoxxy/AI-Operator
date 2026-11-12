@@ -57,6 +57,8 @@ SECURITY_HEADERS = {
 MAX_BODY = 64 * 1024
 MAX_FILE_VIEW = 200 * 1024
 HEARTBEAT_S = 15
+MAX_SSE_CLIENTS = 16
+SOCKET_TIMEOUT_S = 60
 MAX_GOAL_CHARS = 20000
 VIEW_LIMIT = 20000
 LIVE_CHARS = 400
@@ -200,6 +202,8 @@ class OrkestraServer:
         self.httpd: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
         self.closing = threading.Event()
+        self._sse_lock = threading.Lock()
+        self.sse_clients = 0
 
     # -------------------------------------------------------------- sunucu yaşam döngüsü
 
@@ -524,6 +528,7 @@ class _QuietServer(ThreadingHTTPServer):
 
 
 class _Handler(BaseHTTPRequestHandler):
+    timeout = SOCKET_TIMEOUT_S          # yavaş istemcilere karşı (SSE kuyruğu bekler, soketi değil)
     server_version = "Orkestra"
     sys_version = ""
     protocol_version = "HTTP/1.1"
@@ -703,6 +708,10 @@ class _Handler(BaseHTTPRequestHandler):
             son_id = int(last) if last is not None else None
         except ValueError:
             son_id = None
+        with self.app._sse_lock:
+            if self.app.sse_clients >= MAX_SSE_CLIENTS:
+                raise ApiError(429, "Çok fazla açık olay bağlantısı.")
+            self.app.sse_clients += 1
         sub = self.app.bus.subscribe(son_id)
         self.close_connection = True
         try:
@@ -721,3 +730,5 @@ class _Handler(BaseHTTPRequestHandler):
             pass
         finally:
             sub.close()
+            with self.app._sse_lock:
+                self.app.sse_clients -= 1

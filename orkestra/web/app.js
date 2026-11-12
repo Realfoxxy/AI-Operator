@@ -350,6 +350,7 @@
       case 'hata':
         return withChat(s, { kind: ev.uyari ? 'warn' : 'bad', who: 'Orkestra', text: ev.mesaj, long: true });
       case 'iptal':
+        s = Object.assign({}, s, { running: false, status: 'iptal', pending: null, endedAt: at });
         return withChat(s, { kind: 'warn', who: 'Orkestra', text: `İptal edildi: ${ev.neden}` });
       case 'devam':
         return withChat(s, { kind: 'info', who: 'Orkestra', text: `Kaldığı yerden devam: önceki çağrı ${ev.onceki_calls}, kalan görev ${ev.kalan_gorevler}` });
