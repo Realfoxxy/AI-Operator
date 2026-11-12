@@ -97,6 +97,23 @@ class AutoTestVerifyTests(unittest.TestCase):
         self.assertIn("tests/__init__.py", verify_hint(r))
 
 
+class SynthesisVerifyTests(unittest.TestCase):
+    def test_verify_results_reach_final_report(self):
+        from orkestra import prompts
+        from orkestra.engine import TaskResult, verify_line
+        from orkestra.planner import parse_plan
+        plan = parse_plan(json.dumps({"summary": "s", "tasks": [{
+            "id": "t1", "title": "T", "assignee": "claude", "instructions": "Yap.", "expected_output": "Ç.",
+            "needs_write": True, "files": ["tests/test_a.py"]}]}), ["claude"], 8, verify_names=["python-test"])
+        ok = VerifyResult("python-test", 0, 0.2, "....\n------\nRan 4 tests in 0.01s\n\nOK", True)
+        line = verify_line(ok)
+        self.assertIn("BAŞARILI", line)
+        self.assertIn("Ran 4 tests", line)
+        text = prompts.synthesis("hedef", plan, {"t1": TaskResult("tamam", "bitti", dogrulama=[line])}, "tr")
+        self.assertIn("Ran 4 tests", text)
+        self.assertIn("ÇALIŞTIRILMIŞTIR", text)
+
+
 class AnalysisTests(unittest.TestCase):
     def test_analyze_run_summary(self):
         from orkestra.analiz import analyze_run

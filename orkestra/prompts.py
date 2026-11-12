@@ -353,6 +353,8 @@ def synthesis(goal: str, plan, results: dict, lang: str, *, incomplete: bool = F
         body = (r.output if r and r.status == "tamam" else (r.error if r else "")) or "(çıktı yok)"
         warn = f" — uyarılar: {'; '.join(r.uyarilar)}" if r and getattr(r, "uyarilar", None) else ""
         blocks.append(f"[{t.id}] {t.title} — ajan: {t.assignee} — durum: {status}{warn}")
+        if r and getattr(r, "dogrulama", None):
+            blocks.append("  Orkestra'nın çalıştırdığı doğrulama (test) sonuçları: " + "; ".join(r.dogrulama))
         blocks.append(data_block(f"gorev_{t.id}", body, t.assignee))
     plan_summary = json.dumps(
         {"summary": plan.summary, "tasks": [{"id": t.id, "title": t.title, "assignee": t.assignee,
@@ -381,6 +383,8 @@ RAPOR YAPISI (Markdown):
 5. Sonraki adımlar
 
 Ajanların söylemediği hiçbir şeyi yapılmış gibi gösterme.
+Testleri ajanlar değil Orkestra çalıştırır: bir görevde "doğrulama sonuçları" varsa testler ÇALIŞTIRILMIŞTIR;
+sonucu (başarılı/başarısız, kaç test) raporda açıkça yaz. Doğrulama sonucu yoksa testlerin çalıştırılmadığını söyle.
 {"ÖNEMLİ: Aşama sınırına ulaşıldı; hedef TAMAMLANMADI. Raporun başında bunu açıkça belirt." if incomplete else ""}
 
 {DATA_NOTE}

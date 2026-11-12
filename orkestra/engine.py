@@ -74,6 +74,14 @@ class TaskResult:
     output: str = ""
     error: str = ""
     uyarilar: list[str] = field(default_factory=list)
+    dogrulama: list[str] = field(default_factory=list)   # Orkestra'nın çalıştırdığı testlerin son sonuçları
+
+
+def verify_line(r) -> str:
+    """Doğrulama sonucunun rapor için kısa özeti (komut adı, sonuç, çıktının son satırları)."""
+    tail = [ln.strip() for ln in (r.output or "").strip().splitlines() if ln.strip()][-3:]
+    state = "BAŞARILI" if r.ok else "BAŞARISIZ"
+    return f"{r.name}: {state} (çıkış kodu {r.exit_code})" + (f" — {' | '.join(tail)[:300]}" if tail else "")
 
 
 def verify_hint(r) -> str:
@@ -616,12 +624,15 @@ class Orchestrator:
         deps = {d: self._truncate_dep(results[d].output) for d in task.depends_on}
         warnings: list[str] = []
         output = await self.work(task, goal, deps)
+        last_vres: list[VerifyResult] = []
         used = 0      # harcanan revizyon hakkı (otomatik doğrulama revizyonu veya denetçi revizyonu)
         while True:
             vres: list[VerifyResult] = []
             if task.verify:
                 self._task_status(task, "dogrulamada")
                 vres = await self._run_verifications(task, warnings)
+            if vres:
+                last_vres = vres
             failed = [r for r in vres if not r.ok]
             # Yazma görevi hiç dosya değiştirmediyse (kod yalnızca metin olarak döndüyse) bu da bir eksiktir.
             no_write = task.needs_write and task.id not in self._task_wrote
@@ -661,7 +672,7 @@ class Orchestrator:
         unrep = self._unreported.get(task.id)
         if unrep:
             warnings.append("Bildirilmemiş dosya değişiklikleri: " + ", ".join(unrep[:10]))
-        return TaskResult("tamam", output, uyarilar=warnings)
+        return TaskResult("tamam", output, uyarilar=warnings, dogrulama=[verify_line(r) for r in last_vres])
 
     # ================================================================== 10. İşçi + danışma
 
@@ -847,7 +858,8 @@ class Orchestrator:
 
     @staticmethod
     def _results_from_state(ph: PhaseState) -> dict[str, TaskResult]:
-        return {tid: TaskResult(r["durum"], r.get("cikti", ""), r.get("hata", ""), list(r.get("uyarilar", [])))
+        return {tid: TaskResult(r["durum"], r.get("cikti", ""), r.get("hata", ""), list(r.get("uyarilar", [])),
+                                list(r.get("dogrulama", [])))
                 for tid, r in ph.sonuclar.items()}
 
     async def _run_phase_tasks(self, k: int, plan: Plan, ph: PhaseState, goal: str,
@@ -894,7 +906,7 @@ class Orchestrator:
 
         def on_result(tid: str, res: TaskResult) -> None:
             ph.sonuclar[tid] = {"durum": res.status, "cikti": res.output, "hata": res.error,
-                                "uyarilar": res.uyarilar}
+                                "uyarilar": res.uyarilar, "dogrulama": res.dogrulama}
             self._save_state()
 
         results = await self.execute(plan, goal, prior=prior, on_result=on_result)

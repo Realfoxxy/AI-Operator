@@ -157,8 +157,11 @@ def load_state(run_dir: Path, cfg: Config) -> tuple[RunState, list[Plan]]:
             if not (isinstance(r.get("cikti", ""), str) and isinstance(r.get("hata", ""), str)
                     and isinstance(uy, list) and all(isinstance(x, str) for x in uy)):
                 raise StateError(f"{where}: görev sonucu alanları geçersiz: {tid}")
+            dg = r.get("dogrulama", [])
+            if not (isinstance(dg, list) and all(isinstance(x, str) for x in dg)):
+                dg = []
             clean[tid] = {"durum": r["durum"], "cikti": r.get("cikti", ""), "hata": r.get("hata", ""),
-                          "uyarilar": uy}
+                          "uyarilar": uy, "dogrulama": dg}
         bitti = rp.get("bitti", False)
         if not isinstance(bitti, bool):
             raise StateError(f"{where}: 'bitti' geçersiz.")
