@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -24,6 +25,10 @@ class GuardError(SecurityError):
 
 
 PROMPT_DIR = ".orkestra/istemler"   # Orkestra'nın geçici istem dosyaları; snapshot dışı
+# Dosya sistemi saat çözünürlüğü (Windows'ta ~15 ms) aynı boyutta hızlı bir değişikliği gizleyebilir.
+# Son RECENT_S saniyede değişmiş, HASH_LIMIT'ten küçük dosyaların içerik özeti de alınır.
+RECENT_S = 5.0
+HASH_LIMIT = 4 * 1024 * 1024
 MAX_EVENT_PATHS = 200
 
 
@@ -109,8 +114,16 @@ def stat_entry(root: Path, rel: str, protected) -> Entry | None:
         return Entry("l", target=target)
     if not os.path.isfile(p):
         return None
-    sha = _sha256(p) if is_protected(rel, protected) else None
+    recent = (time.time_ns() - st.st_mtime_ns) < RECENT_S * 1e9 and st.st_size <= HASH_LIMIT
+    sha = _sha256(p) if is_protected(rel, protected) or recent else None
     return Entry("f", st.st_size, st.st_mtime_ns, sha)
+
+
+def _changed(a: Entry, b: Entry) -> bool:
+    """Özet yalnızca iki tarafta da varsa karşılaştırılır (korumalı yollarda her zaman vardır)."""
+    if (a.kind, a.size, a.mtime_ns, a.target) != (b.kind, b.size, b.mtime_ns, b.target):
+        return True
+    return a.sha256 is not None and b.sha256 is not None and a.sha256 != b.sha256
 
 
 def take_snapshot(workspace: Path, protected, limit: int) -> Snapshot:
@@ -149,7 +162,7 @@ def diff(before: Snapshot, after: Snapshot) -> ChangeSet:
     b, a = before.entries, after.entries
     return ChangeSet(
         added=sorted(set(a) - set(b)),
-        modified=sorted(k for k in set(a) & set(b) if a[k] != b[k]),
+        modified=sorted(k for k in set(a) & set(b) if _changed(a[k], b[k])),
         removed=sorted(set(b) - set(a)),
     )
 

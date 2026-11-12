@@ -55,6 +55,17 @@ class SnapshotTests(unittest.TestCase):
         rep = self._track(CallInfo(1, "gemini", "t1", True, ["src/"]), change)
         self.assertEqual([p for p, _ in rep.violations], ["CLAUDE.md"])
 
+    def test_same_size_same_mtime_change_detected(self):
+        # Windows'ta ~15 ms saat çözünürlüğü: aynı boyutta hızlı bir değişiklik aynı mtime'ı taşıyabilir.
+        f = self.ws / "src" / "app.py"
+        st = os.stat(f)
+
+        def change():
+            f.write_text("print(9)\n", encoding="utf-8")
+            os.utime(f, ns=(st.st_atime_ns, st.st_mtime_ns))
+        rep = self._track(CallInfo(1, "gemini", "t1", False), change)
+        self.assertEqual(rep.changes.modified, ["src/app.py"])
+
     def test_read_only_call_violation(self):
         rep = self._track(CallInfo(1, "gemini", "t1", False),
                           lambda: (self.ws / "src" / "app.py").write_text("print(2)\n", encoding="utf-8"))

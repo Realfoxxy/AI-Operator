@@ -188,7 +188,13 @@ class EndToEndTests(ServerTestBase):
         self.assertTrue(all("token" not in json.dumps(e).lower() or self.app.token not in json.dumps(e) for e in events))
         self.assertTrue((self.ws / "ornek" / "notlar.md").exists())
 
-        st = self.jreq("GET", "/api/durum")[1]
+        # "bitti" olayından sonra motor iş parçacığı kısa bir temizlik yapar; durum birkaç ms içinde güncellenir.
+        deadline = time.time() + 10
+        while True:
+            st = self.jreq("GET", "/api/durum")[1]
+            if not st["calisiyor"] or time.time() > deadline:
+                break
+            time.sleep(0.05)
         self.assertFalse(st["calisiyor"])
         self.assertIn("sentez", [e["tur"] for e in st["olaylar"]])
         hist = self.jreq("GET", "/api/gecmis")[1]["calistirmalar"]
