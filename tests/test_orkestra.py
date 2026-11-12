@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -650,6 +651,19 @@ class InstallerScriptTests(unittest.TestCase):
         data = (ROOT / "kur.ps1").read_bytes()
         self.assertTrue(data.startswith(b"\xef\xbb\xbf"), "kur.ps1 UTF-8 BOM ile başlamalı")
         data.decode("utf-8")
+
+    def test_windows_launcher_is_ascii_crlf(self):
+        data = (ROOT / "orkestra.cmd").read_bytes()
+        data.decode("ascii")                       # cmd.exe kod sayfasından bağımsız olsun
+        self.assertIn(b"\r\n", data)
+        self.assertNotIn(b"\n", data.replace(b"\r\n", b""))
+
+    def test_old_python_gets_clear_message(self):
+        code = "import sys; sys.version_info = (3, 9, 0); import orkestra"
+        proc = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("Python 3.11 veya üstünü gerektirir", proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
 
     def test_shell_script_has_no_crlf(self):
         self.assertNotIn(b"\r\n", (ROOT / "kur.sh").read_bytes())

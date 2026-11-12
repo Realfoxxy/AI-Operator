@@ -49,7 +49,7 @@ Windows (PowerShell):
 powershell -ExecutionPolicy Bypass -File .\kur.ps1
 ```
 
-Bu yolda komut `python -m orkestra` şeklindedir (Windows'ta `py -m orkestra`).
+Bu yolda Orkestra'yı **Windows'ta `.\orkestra.cmd`** ile başlatırsın. Bu başlatıcı doğru Python sürümünü (3.11+) kendisi bulur; bilgisayarında Visual Studio ile gelen eski bir Python olsa bile sorun çıkmaz. Mac ve Linux'ta komut `python3 -m orkestra` şeklindedir. Bu kılavuzda `python -m orkestra` geçen her yerde Windows'ta `.\orkestra.cmd` yaz.
 
 ### Seçenek B: Tek komutla (pipx)
 
@@ -204,7 +204,10 @@ Komut satırı karşılıkları: `orkestra run "hedef"`, `orkestra run --asamali
 | npm `EACCES` hatası (Linux/macOS) | npm'in global klasörünü kullanıcı klasörüne taşı (npm belgelerindeki "global packages without sudo" adımları) veya Node'u nvm ile kur. |
 | Bağlantı testi başarısız | `/baglan <ajan>` ile yeniden giriş yap. Hata "quota/limit" diyorsa aboneliğin kullanım sınırı dolmuştur; devretme açıksa görev başka ajana geçer. |
 | Copilot hiç yanıt vermiyor | Copilot'un proje klasörüne güvenmesi gerekir: `/baglan copilot` ile o klasörde bir kez aç ve onayla. Her yeni proje için bir kez gerekir. |
-| PowerShell "running scripts is disabled" | `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` çalıştır veya Komut İstemi (cmd) kullan. |
+| PowerShell "running scripts is disabled" (ör. `npm` yazınca) | `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` çalıştır ve `E` de; veya `npm` yerine `npm.cmd` yaz. |
+| `unsupported operand type(s) for \|` veya "Python 3.11 veya üstünü gerektirir" | Eski bir Python (ör. Visual Studio'nun 3.9'u) seçilmiş. `.\orkestra.cmd` kullan; o doğru sürümü bulur. Kurulu sürümler için: `py --list`. |
+| `npm` tanınmıyor | Node.js kurulmamış: `winget install OpenJS.NodeJS.LTS` veya nodejs.org'dan LTS `.msi` dosyasını kur; PowerShell'i yeniden aç. |
+| `git clone` "Permission denied" | Yazma izni olmayan bir klasördesin (ör. `C:\Windows\System32`). Önce `cd ~` yaz, PowerShell'i yönetici olarak açma. |
 | Windows'ta "izin verilmeyen karakter" | `config.toml` içindeki sabit argümanlarda `" % ^ & \| < > !` karakterlerini kullanma. |
 | "Çalışma klasörü ... içeremez" | Proje klasörü Orkestra'nın kendi klasörünün içinde veya ona eşit olamaz; `/proje <ad>` ile proje kökü altında bir klasör kullan. |
 | Kontrol noktası alınamadı | Git kurulu değil veya proje çok büyük. Git'i kur; çok büyük klasörleri (`node_modules`) `.gitignore` ile dışarıda bırak. |

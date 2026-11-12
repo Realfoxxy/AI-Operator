@@ -13,7 +13,7 @@ Set-Location -Path $PSScriptRoot
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 $py = $null
-foreach ($c in @("py -3", "python", "python3")) {
+foreach ($c in @("py -3.14", "py -3.13", "py -3.12", "py -3.11", "py -3", "python", "python3")) {
     $parts = $c.Split(" ")
     $exe = $parts[0]
     $args0 = @($parts | Select-Object -Skip 1)
@@ -61,11 +61,12 @@ Write-Host ""
 $pyShown = ($py -join " ")
 Write-Host @"
 
-Sonraki adımlar:
-  1. Her CLI'ı bir kez açıp giriş yap:  claude   ·   gemini   ·   copilot  (içeride /login)
-  2. Copilot'un çalışma klasörüne güvenmesi için:  cd $ws ; copilot
-  3. Abonelik harcamadan dene:          $pyShown -m orkestra ui --mock
-  4. Gerçek çalıştırma:                 $pyShown -m orkestra ui
+Kurulum tamam. Sonraki adımlar (bu klasörde, yani $PSScriptRoot içinde):
+  1. Abonelik harcamadan dene:       .\orkestra.cmd --mock
+  2. Gerçek terminali aç:            .\orkestra.cmd
+     İçeride hesaplarını bağla:      /baglan claude   /baglan gemini   /baglan copilot
+  3. Tarayıcıda izlemek istersen:    .\orkestra.cmd ui
 
+  .\orkestra.cmd, doğru Python sürümünü ($pyShown) kendisi bulur.
 Not: PowerShell "running scripts is disabled" derse:  Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 "@

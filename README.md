@@ -66,6 +66,8 @@ cd orkestra
 
 Git kullanmıyorsan [Releases](https://github.com/Realfoxxy/AI-Operator/releases) sayfasından son sürümün ZIP dosyasını indirip açabilirsin.
 
+Windows'ta Orkestra'yı her zaman **`.\orkestra.cmd`** ile başlat (ör. `.\orkestra.cmd --mock`); doğru Python sürümünü kendisi bulur. Mac/Linux'ta `python3 -m orkestra` kullan.
+
 Ardından kurulum yardımcısını çalıştır. Python ve Node'u denetler, eksik CLI'ları kurmayı **önerir** (onay vermezsen hiçbir şey kurmaz), testleri ve `doctor` denetimini çalıştırır:
 
 - **Linux / macOS:**

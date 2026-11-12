@@ -33,6 +33,14 @@ jobs:
           [System.Management.Automation.Language.Parser]::ParseFile("$PWD\kur.ps1", [ref]$null, [ref]$errs) | Out-Null
           if ($errs) { $errs | ForEach-Object { Write-Host $_.Message }; exit 1 }
           Write-Host "kur.ps1 sorunsuz ayrıştırıldı."
+      - name: orkestra.cmd başlatıcısı (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          .\orkestra.cmd --help
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          .\orkestra.cmd run --mock --yes --workspace "$env:RUNNER_TEMP\ork-cmd" "baslatici denemesi"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: Sahte ajanlarla uçtan uca çalıştırma
         shell: bash
         run: python -m orkestra run --mock --yes --workspace "$RUNNER_TEMP/orkestra-calisma" "CI denemesi"
