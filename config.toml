@@ -1,6 +1,5 @@
 # Orkestra yapılandırması
 # Not: Windows'ta sabit argümanlarda " % ^ & | < > ! karakterlerini kullanma (güvenlik kontrolü reddeder).
-# Not (Aşama A): [guard], [verify] ve [ui] tabloları Aşama B/C'de eklenecek (DOKUMANTASYON.md bölüm 5.3).
 
 [settings]
 planner = "claude"
@@ -58,3 +57,27 @@ write_args = ["--allow-tool=write"]
 strengths = "hızlı kod üretimi, test yazma, küçük ve odaklı kod değişiklikleri, boilerplate, refactor"
 timeout_s = 900
 max_parallel = 1
+
+[guard]
+protected_paths = [".git", ".github", ".claude", ".gemini", ".copilot", ".vscode", ".idea",
+                   ".mcp.json", "CLAUDE.md", "GEMINI.md", "AGENTS.md", ".orkestra"]
+max_snapshot_files = 20000
+
+[verify]
+max_verify_runs = 30
+env_passthrough = ["PATH", "PATHEXT", "SYSTEMROOT", "COMSPEC", "TEMP", "TMP", "HOME",
+                   "USERPROFILE", "APPDATA", "LOCALAPPDATA", "LANG", "PYTHONIOENCODING"]
+
+[[verify.commands]]
+name = "python-test"
+argv = ["python", "-m", "unittest", "discover", "-q"]
+timeout_s = 300
+
+[[verify.commands]]
+name = "npm-test"
+argv = ["npm", "test", "--silent"]
+timeout_s = 300
+
+[ui]
+port = 8765          # doluysa sonraki 10 port denenir; adres her zaman 127.0.0.1
+open_browser = true

@@ -76,6 +76,28 @@ def validate_workspace(path: Path) -> Path:
     return p
 
 
+def _within(child: Path, parent: Path) -> bool:
+    """child, parent'a eşit mi veya onun içinde mi?"""
+    return child == parent or parent in child.parents
+
+
+def validate_layout(workspace: Path, runs_dir: Path, install_dir: Path, config_dir: Path) -> None:
+    """Bölüm 8 kural 15: klasör yerleşimini doğrular; ihlalde SecurityError fırlatır."""
+    ws = Path(workspace).expanduser().resolve()
+    runs = Path(runs_dir).expanduser().resolve()
+    for other, label in ((Path(install_dir).resolve(), "Orkestra kurulum klasörünü"),
+                         (Path(config_dir).resolve(), "config dosyasının klasörünü")):
+        if _within(other, ws):
+            raise SecurityError(
+                f"Çalışma klasörü {label} içeremez veya ona eşit olamaz: {ws}. "
+                f"Aksi halde ajanlar Orkestra'nın kendi dosyalarını değiştirebilirdi."
+            )
+    if _within(runs, ws):
+        raise SecurityError(f"Kayıt klasörü (runs_dir) çalışma klasörünün içinde olamaz: {runs}")
+    if _within(ws, runs):
+        raise SecurityError(f"Çalışma klasörü kayıt klasörünün (runs_dir) içinde olamaz: {ws}")
+
+
 def make_private_dir(path: Path) -> Path:
     """Klasörü oluşturur; Windows dışında yalnızca sahibine erişim izni verir."""
     p = Path(path)

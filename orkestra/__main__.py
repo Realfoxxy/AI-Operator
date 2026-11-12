@@ -1,4 +1,4 @@
-"""CLI giriş noktası: python -m orkestra run | doctor (bölüm 6.8).
+"""CLI giriş noktası: python -m orkestra run | devam | doctor (bölüm 6.8, 6.9).
 
 Çıkış kodları: 0 başarı · 1 çalışma hatası/iptal · 2 config, güvenlik veya girdi hatası · 130 Ctrl+C.
 """
@@ -6,21 +6,23 @@
 from __future__ import annotations
 
 import argparse
-import json
 import asyncio
 import sys
 from pathlib import Path
 
 from . import __version__
 from .agents import AgentError, CliAgent, MockAgent
-from .config import ConfigError, default_config_path, load_config
-from .engine import BudgetExceeded, Orchestrator
-from .planner import Plan, PlanError
-from .security import SecurityError, redact, validate_workspace
+from .approvals import CliApprover
+from .config import Config, ConfigError, default_config_path, load_config
+from .engine import BudgetExceeded, Orchestrator, RunCancelled, RunStopped
+from .events import ConsolePrinter, EventBus
+from .planner import PlanError
+from .security import SecurityError, redact, validate_layout, validate_workspace
+from .state import ProjectMemory, StateError, load_state
 from .transcript import Transcript
 
 MAX_GOAL_CHARS = 20000
-YES_ANSWERS = {"e", "evet", "y", "yes"}
+INSTALL_DIR = Path(__file__).resolve().parent.parent
 
 
 def _setup_stdio() -> None:
@@ -50,87 +52,60 @@ def _read_goal(args) -> str:
     return sys.stdin.read()
 
 
-def _load(args):
-    settings, cfgs = load_config(Path(args.config) if args.config else default_config_path())
-    if args.workspace:
-        settings.workspace = Path(args.workspace)
-    settings.workspace = validate_workspace(settings.workspace)
-    return settings, cfgs
+def _load_config(args) -> Config:
+    return load_config(Path(args.config) if args.config else default_config_path())
 
 
-def _print_plan(plan: Plan, cfgs) -> None:
-    print("\n=== PLAN ===")
-    print(plan.summary)
-    for t in plan.tasks:
-        agent = cfgs[t.assignee].display if t.assignee in cfgs else t.assignee
-        deps = ", ".join(t.depends_on) or "-"
-        write = "EVET ✎" if t.needs_write else "hayır"
-        print(f"\n[{t.id}] {t.title}")
-        print(f"  Ajan: {agent} · Bağımlılıklar: {deps} · Yazma: {write}")
-        instr = t.instructions[:300] + ("…" if len(t.instructions) > 300 else "")
-        print(f"  Talimat: {instr}")
-    print()
+def _check_workspace(cfg: Config, workspace: Path) -> Path:
+    """Çalışma klasörünü doğrular (kural 4) ve yerleşim kuralını uygular (kural 15)."""
+    ws = validate_workspace(workspace)
+    validate_layout(ws, cfg.settings.runs_dir, INSTALL_DIR, cfg.dir)
+    return ws
 
 
-def _approve(plan: Plan, auto_yes: bool) -> tuple[bool, str]:
-    """Bölüm 6.8 onay kuralları. (onaylandı_mı, iptal_nedeni) döndürür."""
-    if auto_yes and not plan.has_write:
-        print("Plan salt-okunur; --yes ile otomatik onaylandı.")
-        return True, ""
-    if plan.has_write:
-        print("⚠ Bu plan çalışma klasöründe dosya YAZAN görevler içeriyor; onayın gerekiyor.")
-    if not sys.stdin.isatty():
-        return False, "Etkileşimsiz ortamda plan onayı alınamadı."
+def _make_agents(cfg: Config, mock: bool):
+    names = list(cfg.agents)
+    if mock:
+        return {n: MockAgent(c, names) for n, c in cfg.agents.items()}
+    return {n: CliAgent(c) for n, c in cfg.agents.items()}
+
+
+async def _drive(orch: Orchestrator, goal: str) -> str:
+    return await orch.run(goal)
+
+
+def _execute(orch: Orchestrator, goal: str, bus: EventBus, settings_max_calls: int) -> int:
+    """Motoru çalıştırır ve hataları çıkış kodlarına çevirir."""
     try:
-        answer = input("Planı onaylıyor musun? [e/H]: ").strip().lower()
-    except EOFError:
-        return False, "Onay alınamadı."
-    if answer in YES_ANSWERS:
-        return True, ""
-    return False, "Kullanıcı planı onaylamadı."
-
-
-def _task_md(task, res) -> str:
-    lines = [f"# [{task.id}] {task.title}", "", f"- Ajan: {task.assignee}",
-             f"- Durum: {res.status if res else 'çalışmadı'}", ""]
-    if res and res.status == "tamam":
-        lines.append(res.output)
-    else:
-        lines.append(f"Hata: {res.error if res else '-'}")
-    return "\n".join(lines) + "\n"
+        report = asyncio.run(_drive(orch, goal))
+    except RunCancelled as e:
+        print(f"İptal edildi: {e}")
+        return 1
+    except RunStopped as e:
+        _err(str(e))
+        if orch.run_dir:
+            print(f"Durum kaydedildi. Sürdürmek için: python -m orkestra devam {orch.run_dir}")
+        return 1
+    except (PlanError, AgentError, SecurityError, BudgetExceeded) as e:
+        msg = redact(str(e))
+        bus.publish("hata", mesaj=msg)
+        _err(msg)
+        return 1
+    except KeyboardInterrupt:
+        bus.publish("iptal", neden="Kullanıcı Ctrl+C ile durdurdu.")
+        print("\nKullanıcı tarafından durduruldu.", file=sys.stderr)
+        if orch.run_dir:
+            print(f"Durum kaydedildi. Sürdürmek için: python -m orkestra devam {orch.run_dir}", file=sys.stderr)
+        return 130
+    print("\n=== SONUÇ RAPORU ===\n")
+    print(redact(report))
+    print(f"\nToplam model çağrısı: {orch.calls}/{settings_max_calls}")
+    if orch.run_dir:
+        print(f"Rapor: {orch.run_dir / 'sonuc.md'}")
+    return 0
 
 
 # ====================================================================== run
-
-async def _run_flow(goal: str, args, settings, cfgs, transcript: Transcript) -> int:
-    names = list(cfgs)
-    if args.mock:
-        agents = {n: MockAgent(c, names) for n, c in cfgs.items()}
-    else:
-        agents = {n: CliAgent(c) for n, c in cfgs.items()}
-    orch = Orchestrator(settings, agents, transcript, settings.workspace, log=print)
-
-    plan = await orch.make_plan(goal)
-    transcript.save("plan.json", json.dumps(plan.to_dict(), ensure_ascii=False, indent=2))
-    _print_plan(plan, cfgs)
-
-    ok, reason = _approve(plan, args.yes)
-    if not ok:
-        transcript.event("iptal", neden=reason)
-        print(f"İptal edildi: {reason}")
-        return 1
-
-    results = await orch.execute(plan, goal)
-    for t in plan.tasks:
-        transcript.save(f"gorev-{t.id}.md", _task_md(t, results.get(t.id)))
-    report = await orch.synthesize(goal, plan, results)
-    path = transcript.save("sonuc.md", report)
-    print("\n=== SONUÇ RAPORU ===\n")
-    print(redact(report))
-    print(f"\nToplam model çağrısı: {orch.calls}/{settings.max_calls}")
-    print(f"Rapor: {path}")
-    return 0
-
 
 def cmd_run(args) -> int:
     try:
@@ -145,64 +120,107 @@ def cmd_run(args) -> int:
         _err(f"Hedef en fazla {MAX_GOAL_CHARS} karakter olabilir ({len(goal)} verildi).")
         return 2
     try:
-        settings, cfgs = _load(args)
+        cfg = _load_config(args)
+        if args.asamali:
+            cfg.settings.mode = "asamali"
+        ws = _check_workspace(cfg, Path(args.workspace) if args.workspace else cfg.settings.workspace)
     except (ConfigError, SecurityError) as e:
         _err(str(e))
         return 2
+    cfg.settings.workspace = ws
 
     try:
-        transcript = Transcript(settings.runs_dir)
+        transcript = Transcript(cfg.settings.runs_dir)
     except OSError as e:
         _err(f"Kayıt klasörü oluşturulamadı: {e}")
         return 2
+    bus = EventBus()
+    bus.add_listener(transcript.on_event)
+    bus.add_listener(ConsolePrinter({n: c.display for n, c in cfg.agents.items()}))
     try:
-        transcript.event("baslangic", hedef=goal, calisma_klasoru=str(settings.workspace), mock=bool(args.mock))
+        bus.publish("baslangic", hedef=goal, calisma_klasoru=str(ws), mock=bool(args.mock),
+                    mod=cfg.settings.mode)
         print(f"Orkestra {__version__}" + (" (sahte ajanlar)" if args.mock else ""))
-        print(f"Çalışma klasörü: {settings.workspace}")
+        print(f"Çalışma klasörü: {ws}")
         print(f"Kayıt: {transcript.dir}")
-        try:
-            return asyncio.run(_run_flow(goal, args, settings, cfgs, transcript))
-        except (PlanError, AgentError, SecurityError, BudgetExceeded) as e:
-            msg = redact(str(e))
-            transcript.event("hata", mesaj=msg)
-            _err(msg)
-            return 1
-        except KeyboardInterrupt:
-            transcript.event("iptal", neden="Kullanıcı Ctrl+C ile durdurdu.")
-            print("\nKullanıcı tarafından durduruldu.", file=sys.stderr)
-            return 130
+        if cfg.settings.mode == "asamali":
+            print(f"Mod: aşamalı (en fazla {cfg.settings.max_phases} aşama)")
+        memory = ProjectMemory.load(ws)
+        if not memory.empty:
+            print(f"Proje hafızası yüklendi: {memory.summary()}")
+        orch = Orchestrator(cfg, _make_agents(cfg, args.mock), bus, ws, CliApprover(auto_yes=args.yes),
+                            run_dir=transcript.dir, memory=memory)
+        return _execute(orch, goal, bus, cfg.settings.max_calls)
+    finally:
+        transcript.close()
+
+
+# ====================================================================== devam
+
+def cmd_devam(args) -> int:
+    run_dir = Path(args.run_klasoru).expanduser()
+    try:
+        cfg = _load_config(args)
+    except ConfigError as e:
+        _err(str(e))
+        return 2
+    try:
+        run_dir = run_dir.resolve(strict=True)
+        state, plans = load_state(run_dir, cfg)
+        ws = _check_workspace(cfg, Path(state.calisma_klasoru))
+    except (OSError, StateError, SecurityError) as e:
+        _err(f"Çalıştırma sürdürülemiyor: {e}")
+        return 2
+    if state.durum == "bitti":
+        print("Bu çalıştırma zaten tamamlanmış; sürdürülecek bir şey yok.")
+        return 0
+    cfg.settings.workspace = ws
+    cfg.settings.mode = state.mod
+
+    transcript = Transcript(cfg.settings.runs_dir, existing=run_dir)
+    bus = EventBus()
+    bus.add_listener(transcript.on_event)
+    bus.add_listener(ConsolePrinter({n: c.display for n, c in cfg.agents.items()}))
+    try:
+        print(f"Orkestra {__version__}" + (" (sahte ajanlar)" if args.mock else ""))
+        print(f"Sürdürülen çalıştırma: {run_dir}")
+        print(f"Çalışma klasörü: {ws}")
+        memory = ProjectMemory.load(ws)
+        # Yeni oturuma max_calls kadar taze bütçe verilir; toplam çağrı sayısı durumda ayrıca tutulur.
+        orch = Orchestrator(cfg, _make_agents(cfg, args.mock), bus, ws, CliApprover(auto_yes=args.yes),
+                            run_dir=run_dir, state=state, resume_plans=plans, memory=memory)
+        return _execute(orch, state.hedef, bus, cfg.settings.max_calls)
     finally:
         transcript.close()
 
 
 # ====================================================================== doctor
 
-async def _doctor(settings, cfgs) -> bool:
+async def _doctor(cfg: Config) -> bool:
     ok = True
-    for name, cfg in cfgs.items():
+    for name, acfg in cfg.agents.items():
         try:
-            ver = await CliAgent(cfg).version()
-            print(f"  ✔ {name} ({cfg.display}): {ver}")
+            ver = await CliAgent(acfg).version()
+            print(f"  ✔ {name} ({acfg.display}): {ver}")
         except (AgentError, SecurityError, OSError) as e:
             ok = False
-            print(f"  ✖ {name} ({cfg.display}): {redact(str(e))}")
+            print(f"  ✖ {name} ({acfg.display}): {redact(str(e))}")
     return ok
 
 
 def cmd_doctor(args) -> int:
     try:
-        settings, cfgs = load_config(Path(args.config) if args.config else default_config_path())
+        cfg = _load_config(args)
     except ConfigError as e:
         _err(str(e))
         return 2
     print(f"Orkestra {__version__}")
-    print(f"Planlayıcı: {settings.planner}")
-    print(f"Denetçi: {settings.reviewer or '(denetim kapalı)'}")
+    print(f"Planlayıcı: {cfg.settings.planner}")
+    print(f"Denetçi: {cfg.settings.reviewer or '(denetim kapalı)'}")
     print("Ajanlar:")
-    ok = asyncio.run(_doctor(settings, cfgs))
-    ws = Path(args.workspace) if args.workspace else settings.workspace
+    ok = asyncio.run(_doctor(cfg))
     try:
-        ws = validate_workspace(ws)
+        ws = _check_workspace(cfg, Path(args.workspace) if args.workspace else cfg.settings.workspace)
         print(f"  ✔ Çalışma klasörü: {ws}")
     except SecurityError as e:
         ok = False
@@ -225,7 +243,15 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--workspace", help="config'teki çalışma klasörünü ez")
     r.add_argument("--mock", action="store_true", help="gerçek CLI yerine sahte ajanlar kullan")
     r.add_argument("--yes", action="store_true", help="salt-okunur planları otomatik onayla")
+    r.add_argument("--asamali", action="store_true", help="aşamalı mod (büyük uygulamalar için)")
     r.set_defaults(func=cmd_run)
+
+    dv = sub.add_parser("devam", help="yarım kalan bir çalıştırmayı kaldığı yerden sürdür")
+    dv.add_argument("run_klasoru", help="runs/<YYYYMMDD-HHMMSS> klasörü")
+    dv.add_argument("--config", help="config dosyası")
+    dv.add_argument("--mock", action="store_true", help="gerçek CLI yerine sahte ajanlar kullan")
+    dv.add_argument("--yes", action="store_true", help="salt-okunur planları otomatik onayla")
+    dv.set_defaults(func=cmd_devam)
 
     d = sub.add_parser("doctor", help="CLI araçlarını ve çalışma klasörünü kontrol et")
     d.add_argument("--config", help="config dosyası")

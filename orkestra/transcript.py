@@ -20,7 +20,14 @@ def _redact_value(v):
 
 
 class Transcript:
-    def __init__(self, runs_dir: Path):
+    """Çalıştırma kaydı. Sürüm 0.2'de bir EventBus abonesidir: bus.add_listener(transcript.on_event)."""
+
+    def __init__(self, runs_dir: Path, *, existing: Path | None = None):
+        if existing is not None:
+            # 'devam': aynı klasördeki kayit.jsonl dosyasına eklenir.
+            self.dir = Path(existing)
+            self._fh = open(self.dir / "kayit.jsonl", "a", encoding="utf-8")
+            return
         root = make_private_dir(Path(runs_dir))
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         path = root / stamp
@@ -41,6 +48,16 @@ class Transcript:
             return
         row = {"zaman": datetime.now().isoformat(timespec="seconds"), "tur": kind}
         row.update({k: _redact_value(v) for k, v in data.items()})
+        self._fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+        self._fh.flush()
+
+    def on_event(self, event: dict, persist: bool) -> None:
+        """EventBus aboneliği. persist=False olaylar (canlı akış parçaları) yazılmaz."""
+        if not persist or self._fh is None:
+            return
+        row = {"zaman": event.get("zaman") or datetime.now().isoformat(timespec="seconds"),
+               "tur": event["tur"], "id": event.get("id")}
+        row.update({k: _redact_value(v) for k, v in event.items() if k not in ("zaman", "tur", "id")})
         self._fh.write(json.dumps(row, ensure_ascii=False) + "\n")
         self._fh.flush()
 

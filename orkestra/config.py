@@ -55,9 +55,56 @@ class Settings:
     dep_output_chars: int = 12000
 
 
-# Aşama A: [guard], [verify] ve [ui] tabloları sürüm 0.2'nin Aşama B/C kapsamındadır
-# (bölüm 6.9). Şimdilik yalnızca bu iki tablo tanınır; diğer her şey hata verir.
-_TOP_LEVEL = {"settings", "agents"}
+DEFAULT_PROTECTED = [".git", ".github", ".claude", ".gemini", ".copilot", ".vscode", ".idea",
+                     ".mcp.json", "CLAUDE.md", "GEMINI.md", "AGENTS.md", ".orkestra"]
+DEFAULT_ENV_PASSTHROUGH = ["PATH", "PATHEXT", "SYSTEMROOT", "COMSPEC", "TEMP", "TMP", "HOME",
+                           "USERPROFILE", "APPDATA", "LOCALAPPDATA", "LANG", "PYTHONIOENCODING"]
+
+
+@dataclass
+class GuardConfig:
+    protected_paths: list[str] = field(default_factory=lambda: list(DEFAULT_PROTECTED))
+    max_snapshot_files: int = 20000
+
+
+@dataclass
+class VerifyCommand:
+    name: str
+    argv: list[str]
+    timeout_s: int = 300
+
+
+@dataclass
+class VerifyConfig:
+    max_verify_runs: int = 30
+    env_passthrough: list[str] = field(default_factory=lambda: list(DEFAULT_ENV_PASSTHROUGH))
+    commands: list[VerifyCommand] = field(default_factory=list)
+
+    def get(self, name: str) -> VerifyCommand | None:
+        return next((c for c in self.commands if c.name == name), None)
+
+
+@dataclass
+class UiConfig:
+    port: int = 8765
+    open_browser: bool = True
+
+
+@dataclass
+class Config:
+    settings: Settings
+    agents: dict[str, AgentConfig]
+    guard: GuardConfig
+    verify: VerifyConfig
+    ui: UiConfig
+    path: Path
+
+    @property
+    def dir(self) -> Path:
+        return self.path.resolve().parent
+
+
+_TOP_LEVEL = {"settings", "agents", "guard", "verify", "ui"}
 
 
 # ---------------------------------------------------------------- tür denetimleri
@@ -210,10 +257,96 @@ def _parse_agent(name: str, raw: dict) -> AgentConfig:
     return a
 
 
+def normalize_rel_path(value: str) -> str | None:
+    """Göreli yolu '/' ayraçlı biçime getirir; güvensizse None döndürür.
+
+    Mutlak yol, sürücü harfi, '..' veya '.' bileşeni ve boş bileşen reddedilir.
+    Sondaki '/' korunur (klasörün altındaki her şeyi kapsar).
+    """
+    if not isinstance(value, str):
+        return None
+    v = value.strip().replace("\\", "/")
+    if not v or v.startswith("/") or re.match(r"^[A-Za-z]:", v) or "\x00" in v:
+        return None
+    is_dir = v.endswith("/")
+    body = v[:-1] if is_dir else v
+    parts = body.split("/")
+    if not body or any(p in ("", ".", "..") for p in parts):
+        return None
+    return body + ("/" if is_dir else "")
+
+
+def _parse_guard(raw) -> GuardConfig:
+    if not isinstance(raw, dict):
+        raise ConfigError("[guard] bir tablo olmalı.")
+    _check_unknown(raw, {"protected_paths", "max_snapshot_files"}, "guard")
+    g = GuardConfig()
+    if "protected_paths" in raw:
+        items = _str_list(raw["protected_paths"], _where("guard", "protected_paths"))
+        paths = []
+        for item in items:
+            norm = normalize_rel_path(item)
+            if norm is None:
+                raise ConfigError(f"[guard] protected_paths: geçersiz yol: {item!r} (göreli ve '..' içermeyen olmalı)")
+            paths.append(norm.rstrip("/"))
+        g.protected_paths = paths
+    if ".orkestra" not in [p.lower() for p in g.protected_paths]:
+        g.protected_paths.append(".orkestra")  # her zaman korumalı (bölüm 5.4)
+    if "max_snapshot_files" in raw:
+        g.max_snapshot_files = _int(raw["max_snapshot_files"], _where("guard", "max_snapshot_files"), minimum=100)
+    return g
+
+
+def _parse_verify(raw) -> VerifyConfig:
+    if not isinstance(raw, dict):
+        raise ConfigError("[verify] bir tablo olmalı.")
+    _check_unknown(raw, {"max_verify_runs", "env_passthrough", "commands"}, "verify")
+    v = VerifyConfig()
+    if "max_verify_runs" in raw:
+        v.max_verify_runs = _int(raw["max_verify_runs"], _where("verify", "max_verify_runs"), minimum=0)
+    if "env_passthrough" in raw:
+        v.env_passthrough = _str_list(raw["env_passthrough"], _where("verify", "env_passthrough"))
+    cmds = raw.get("commands", [])
+    if not isinstance(cmds, list):
+        raise ConfigError("[[verify.commands]] bir tablo listesi olmalı.")
+    seen = set()
+    for i, c in enumerate(cmds, 1):
+        where = f"verify.commands[{i}]"
+        if not isinstance(c, dict):
+            raise ConfigError(f"[{where}] bir tablo olmalı.")
+        _check_unknown(c, {"name", "argv", "timeout_s"}, where)
+        name = c.get("name")
+        if not is_safe_id(name if isinstance(name, str) else ""):
+            raise ConfigError(f"[{where}] name: ^[a-z0-9][a-z0-9_-]{{0,39}}$ desenine uyan bir ad olmalı.")
+        if name in seen:
+            raise ConfigError(f"[{where}] name: '{name}' birden fazla kez tanımlanmış.")
+        seen.add(name)
+        if "argv" not in c:
+            raise ConfigError(f"[{where}] argv: zorunlu alan eksik.")
+        argv = _str_list(c["argv"], f"[{where}] argv", allow_empty=False)
+        timeout = _int(c.get("timeout_s", 300), f"[{where}] timeout_s", minimum=10)
+        v.commands.append(VerifyCommand(name=name, argv=argv, timeout_s=timeout))
+    return v
+
+
+def _parse_ui(raw) -> UiConfig:
+    if not isinstance(raw, dict):
+        raise ConfigError("[ui] bir tablo olmalı.")
+    _check_unknown(raw, {"port", "open_browser"}, "ui")
+    u = UiConfig()
+    if "port" in raw:
+        u.port = _int(raw["port"], _where("ui", "port"), minimum=1024)
+        if u.port > 65535:
+            raise ConfigError("[ui] port: en fazla 65535 olmalı.")
+    if "open_browser" in raw:
+        u.open_browser = _bool(raw["open_browser"], _where("ui", "open_browser"))
+    return u
+
+
 # ---------------------------------------------------------------- giriş noktası
 
-def load_config(path: Path) -> tuple[Settings, dict[str, AgentConfig]]:
-    """Config dosyasını okur, doğrular ve (ayarlar, etkin ajanlar) döndürür."""
+def load_config(path: Path) -> Config:
+    """Config dosyasını okur, doğrular ve Config nesnesi döndürür (yalnızca etkin ajanlar)."""
     path = Path(path)
     try:
         with open(path, "rb") as f:
@@ -247,7 +380,14 @@ def load_config(path: Path) -> tuple[Settings, dict[str, AgentConfig]]:
         raise ConfigError(f"Planlayıcı ajan '{settings.planner}' tanımlı veya etkin değil.")
     if settings.reviewer and settings.reviewer not in agents:
         raise ConfigError(f"Denetçi ajan '{settings.reviewer}' tanımlı veya etkin değil.")
-    return settings, agents
+    return Config(
+        settings=settings,
+        agents=agents,
+        guard=_parse_guard(data.get("guard", {})),
+        verify=_parse_verify(data.get("verify", {})),
+        ui=_parse_ui(data.get("ui", {})),
+        path=path.resolve(),
+    )
 
 
 def default_config_path() -> Path:

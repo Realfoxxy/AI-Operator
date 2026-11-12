@@ -7,6 +7,7 @@ import re
 from collections import deque
 from dataclasses import asdict, dataclass, field
 
+from .config import normalize_rel_path
 from .security import is_safe_id
 
 
@@ -23,15 +24,27 @@ class Task:
     expected_output: str
     depends_on: list[str] = field(default_factory=list)
     needs_write: bool = False
+    files: list[str] = field(default_factory=list)
+    verify: list[str] = field(default_factory=list)
 
 
 @dataclass
 class Plan:
     summary: str
     tasks: list[Task]
+    phase_title: str = ""
+    done: bool = False
 
     def to_dict(self) -> dict:
-        return {"summary": self.summary, "tasks": [asdict(t) for t in self.tasks]}
+        d = {"summary": self.summary, "tasks": [asdict(t) for t in self.tasks]}
+        if self.phase_title or self.done:
+            d["phase_title"] = self.phase_title
+            d["done"] = self.done
+        return d
+
+    @property
+    def verify_names(self) -> list[str]:
+        return list(dict.fromkeys(v for t in self.tasks for v in t.verify))
 
     @property
     def has_write(self) -> bool:
@@ -39,6 +52,44 @@ class Plan:
 
 
 LIMITS = {"title": 200, "instructions": 6000, "expected_output": 1500, "summary": 2000}
+MAX_FILES_PER_TASK = 100
+MAX_FILE_CHARS = 300
+
+
+def _key(path: str) -> str:
+    # Karşılaştırmalar büyük/küçük harfe duyarsızdır (Windows ve macOS dosya sistemleri için güvenli taraf).
+    return path.rstrip("/").lower()
+
+
+def paths_overlap(a: str, b: str) -> bool:
+    """Eşitlik veya önek ilişkisi (src/ ile src/app.py) çakışma sayılır."""
+    ka, kb = _key(a), _key(b)
+    return ka == kb or kb.startswith(ka + "/") or ka.startswith(kb + "/")
+
+
+def _parse_files(raw, where: str, needs_write: bool, protected) -> list[str]:
+    if raw is None:
+        raw = []
+    if not isinstance(raw, list) or not all(isinstance(x, str) for x in raw):
+        raise PlanError(f"{where}: 'files' bir metin listesi olmalı.")
+    if len(raw) > MAX_FILES_PER_TASK:
+        raise PlanError(f"{where}: 'files' en fazla {MAX_FILES_PER_TASK} giriş içerebilir.")
+    files: list[str] = []
+    for item in raw:
+        norm = normalize_rel_path(item) if len(item) <= MAX_FILE_CHARS else None
+        if norm is None:
+            raise PlanError(f"{where}: geçersiz dosya yolu: {item[:80]!r} "
+                            f"(mutlak yol, sürücü harfi, '..' ve boş bileşen yasaktır).")
+        for p in protected:
+            if paths_overlap(norm, p):
+                raise PlanError(f"{where}: '{norm}' korumalı bir yola giriyor: {p}")
+        if norm not in files:
+            files.append(norm)
+    if needs_write and not files:
+        raise PlanError(f"{where}: needs_write=true ise 'files' en az bir yol içermeli.")
+    if not needs_write and files:
+        raise PlanError(f"{where}: needs_write=false ise 'files' boş olmalı.")
+    return files
 
 _FENCE_RE = re.compile(r"^\s*```[A-Za-z0-9_-]*\s*\n?(.*?)\n?\s*```\s*$", re.S)
 
@@ -71,15 +122,27 @@ def _text(obj: dict, key: str, where: str) -> str:
     return v.strip()[: LIMITS[key]]
 
 
-def parse_plan(text: str, agent_names, max_tasks: int) -> Plan:
+def parse_plan(text: str, agent_names, max_tasks: int, *, verify_names=(), protected=(),
+               phased: bool = False) -> Plan:
     """Planlayıcı çıktısını sıkı biçimde doğrular ve Plan döndürür."""
     data = extract_json(text)
     if not isinstance(data, dict):
         raise PlanError("Plan kökü bir JSON nesnesi olmalı.")
     summary = _text(data, "summary", "Plan")
+    phase_title, done = "", False
+    if phased:
+        pt = data.get("phase_title", "")
+        if not isinstance(pt, str):
+            raise PlanError("Plan: 'phase_title' metin olmalı.")
+        phase_title = pt.strip()[:200]
+        done = data.get("done", False)
+        if not isinstance(done, bool):
+            raise PlanError("Plan: 'done' true veya false olmalı.")
     raw_tasks = data.get("tasks")
-    if not isinstance(raw_tasks, list) or not raw_tasks:
-        raise PlanError("Plan: 'tasks' boş olmayan bir liste olmalı.")
+    if not isinstance(raw_tasks, list):
+        raise PlanError("Plan: 'tasks' bir liste olmalı.")
+    if not raw_tasks and not (phased and done):
+        raise PlanError("Plan: 'tasks' boş olamaz (yalnızca aşamalı modda done=true iken boş olabilir).")
     if len(raw_tasks) > max_tasks:
         raise PlanError(f"Plan: en fazla {max_tasks} görev olabilir, {len(raw_tasks)} görev verildi.")
 
@@ -109,6 +172,14 @@ def parse_plan(text: str, agent_names, max_tasks: int) -> Plan:
         needs_write = raw.get("needs_write", False)
         if not isinstance(needs_write, bool):
             raise PlanError(f"{where}: 'needs_write' true veya false olmalı.")
+        files = _parse_files(raw.get("files"), where, needs_write, protected)
+        verify = raw.get("verify") or []
+        if not isinstance(verify, list) or not all(isinstance(v, str) for v in verify):
+            raise PlanError(f"{where}: 'verify' bir metin listesi olmalı.")
+        verify = list(dict.fromkeys(v.strip().lower() for v in verify))
+        for v in verify:
+            if v not in verify_names:
+                raise PlanError(f"{where}: bilinmeyen doğrulama komutu: {v[:50]!r}")
         tasks.append(Task(
             id=tid,
             title=_text(raw, "title", where),
@@ -117,7 +188,16 @@ def parse_plan(text: str, agent_names, max_tasks: int) -> Plan:
             expected_output=_text(raw, "expected_output", where),
             depends_on=[d.strip().lower() for d in deps],
             needs_write=needs_write,
+            files=files,
+            verify=verify,
         ))
+
+    for i, a in enumerate(tasks):
+        for b in tasks[i + 1:]:
+            for fa in a.files:
+                for fb in b.files:
+                    if paths_overlap(fa, fb):
+                        raise PlanError(f"Görev '{a.id}' ve '{b.id}' aynı dosyalara yazamaz: {fa} / {fb}")
 
     for t in tasks:
         for d in t.depends_on:
@@ -146,7 +226,7 @@ def parse_plan(text: str, agent_names, max_tasks: int) -> Plan:
         bad = sorted(tid for tid, n in indeg.items() if n > 0)
         raise PlanError(f"Planda döngüsel bağımlılık var: {', '.join(bad)}")
 
-    return Plan(summary=summary, tasks=tasks)
+    return Plan(summary=summary, tasks=tasks, phase_title=phase_title, done=done)
 
 
 def parse_review(text: str) -> tuple[str, str]:
