@@ -59,6 +59,22 @@ def usage_from(data: dict) -> dict | None:
     return {"girdi": girdi, "cikti": cikti, "maliyet_usd": maliyet}
 
 
+# Resmi CLI'ların npm paketleri: "programı bulunamadı" mesajında kurulum komutu gösterilir.
+NPM_PACKAGES = {"claude": "@anthropic-ai/claude-code", "gemini": "@google/gemini-cli", "copilot": "@github/copilot"}
+
+
+def not_found_message(agent: str, program: str) -> str:
+    key = Path(program).name.lower()
+    for ext in (".cmd", ".exe", ".bat", ".ps1"):
+        key = key.removesuffix(ext)
+    pkg = NPM_PACKAGES.get(key)
+    if pkg:
+        return (f"{agent}: '{program}' programı bulunamadı. Kurmak için: npm install -g {pkg} "
+                f"(ardından terminali kapatıp yeniden aç).")
+    return (f"{agent}: '{program}' programı bulunamadı. Programı kur ve PATH'te olduğundan emin ol; "
+            f"kontrol için 'python -m orkestra doctor'.")
+
+
 class Agent:
     def __init__(self, cfg: AgentConfig):
         self.cfg = cfg
@@ -81,10 +97,7 @@ class CliAgent(Agent):
     def resolve(self) -> str:
         exe = shutil.which(self.cfg.command[0])
         if not exe:
-            raise AgentError(
-                f"{self.name}: '{self.cfg.command[0]}' programı bulunamadı. "
-                f"Kurulumu kontrol etmek için 'python -m orkestra doctor' çalıştır."
-            )
+            raise AgentError(not_found_message(self.name, self.cfg.command[0]))
         return exe
 
     async def run(self, prompt: str, *, write: bool, workdir: Path, tag: str, on_chunk: OnChunk = None,
@@ -98,8 +111,7 @@ class CliAgent(Agent):
         base = cfg.stream_command if cfg.stream_format.endswith("-stream-json") else cfg.command
         exe = shutil.which(base[0]) if base is cfg.stream_command else self.resolve()
         if not exe:
-            raise AgentError(f"{self.name}: '{base[0]}' programı bulunamadı. "
-                             f"Kurulumu kontrol etmek için 'python -m orkestra doctor' çalıştır.")
+            raise AgentError(not_found_message(self.name, base[0]))
         argv = [exe, *base[1:], *(cfg.write_args if write else cfg.read_only_args)]
         if session and cfg.resume_args and SESSION_RE.match(session):
             argv += [a.replace("{session}", session) for a in cfg.resume_args]

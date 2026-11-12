@@ -334,6 +334,11 @@ class CliAgentTests(unittest.TestCase):
         with self.assertRaises(AgentError) as cm:
             CliAgent(cfg).resolve()
         self.assertIn("doctor", str(cm.exception))
+        # Bilinen araçlar için mesaj doğrudan kurulum komutunu verir
+        with mock.patch("shutil.which", return_value=None):
+            with self.assertRaises(AgentError) as cm:
+                CliAgent(AgentConfig(name="claude", display="C", command=["claude"])).resolve()
+        self.assertIn("npm install -g @anthropic-ai/claude-code", str(cm.exception))
 
 
 class _FailingMock(MockAgent):
