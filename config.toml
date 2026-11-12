@@ -1,0 +1,60 @@
+# Orkestra yapılandırması
+# Not: Windows'ta sabit argümanlarda " % ^ & | < > ! karakterlerini kullanma (güvenlik kontrolü reddeder).
+# Not (Aşama A): [guard], [verify] ve [ui] tabloları Aşama B/C'de eklenecek (DOKUMANTASYON.md bölüm 5.3).
+
+[settings]
+planner = "claude"
+reviewer = "claude"
+workspace = "../orkestra-calisma"   # deponun DIŞINDA (bölüm 9.4)
+runs_dir = "./runs"
+language = "Türkçe"
+mode = "tek"                        # "asamali" büyük uygulamalar için
+max_phases = 6
+max_tasks = 8
+max_revisions = 1
+max_consult_rounds = 2
+max_calls = 60
+dep_output_chars = 12000
+
+[agents.claude]
+display = "Claude (Claude Code, Claude Pro)"
+color = "#d97757"
+command = ["claude", "-p", "--output-format", "json", "--max-turns", "30"]
+stream_format = "claude-stream-json"
+stream_command = ["claude", "-p", "--output-format", "stream-json", "--verbose", "--max-turns", "30"]
+prompt_via = "stdin"
+output = "json"
+json_field = "result"
+read_only_args = ["--allowedTools", "Read,Glob,Grep"]
+write_args = ["--allowedTools", "Read,Glob,Grep,Edit,Write"]
+strengths = "planlama, mimari tasarım, karmaşık akıl yürütme, kapsamlı kod yazma ve kod inceleme, güvenlik analizi"
+timeout_s = 900
+max_parallel = 1
+
+[agents.gemini]
+display = "Gemini (Gemini CLI, Google AI Pro)"
+color = "#4c8bf5"
+command = ["gemini", "-p", "Asagidaki gorevi uygula.", "--output-format", "json"]
+stream_format = "none"   # Gemini CLI sürümün stream-json destekliyorsa (gemini --help) "gemini-stream-json" yap ve stream_command ekle
+prompt_via = "stdin"
+output = "json"
+json_field = "response"
+read_only_args = []
+write_args = ["--approval-mode", "auto_edit"]
+strengths = "çok uzun bağlam, geniş araştırma ve özetleme, alternatif çözümler üretme, dokümantasyon, veri analizi"
+timeout_s = 900
+max_parallel = 1
+
+[agents.copilot]
+display = "GitHub Copilot (Copilot CLI)"
+color = "#8b5cf6"
+command = ["copilot", "-s", "--no-ask-user"]
+stream_format = "text"   # -s ile stdout parça parça okunur
+prompt_via = "file"
+file_args = ["-p", "Read the file {path} in the current directory and carry out exactly the task described there. Do not run shell commands."]
+output = "text"
+read_only_args = []
+write_args = ["--allow-tool=write"]
+strengths = "hızlı kod üretimi, test yazma, küçük ve odaklı kod değişiklikleri, boilerplate, refactor"
+timeout_s = 900
+max_parallel = 1
