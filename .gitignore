@@ -1,0 +1,20 @@
+# Çalıştırma kayıtları: tüm istemler ve cevaplar burada. Maskeleme olsa bile ASLA commit etme.
+runs/
+calisma/
+orkestra-calisma/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# Editör / işletim sistemi
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
