@@ -2,6 +2,8 @@
 
 **Orkestra** — Claude, Gemini ve GitHub Copilot'u tek bir ekip gibi çalıştıran çok-ajanlı orkestratör. Claude planlar ve denetler; görevler paralel dağıtılır; ajanlar birbirine danışır. Resmi CLI araçlarını kullandığı için mevcut aboneliklerinle çalışır. Ajanların çalışmasını canlı izleyebileceğin görsel bir çalışma alanı ve büyük uygulamalar için aşamalı planlama içerir. Saf Python, sıfır bağımlılık, güvenlik öncelikli tasarım. Ayrıntılar için [DOKUMANTASYON.md](DOKUMANTASYON.md).
 
+> **English:** [README.en.md](README.en.md)
+
 ![Ofis görünümü: Claude, Gemini'ye danışıyor; görevler panoda ilerliyor](docs/ofis.png)
 
 <sub>Ekran görüntüleri `python -m orkestra ui --mock` ile sahte ajanlarla alınmıştır.</sub>
