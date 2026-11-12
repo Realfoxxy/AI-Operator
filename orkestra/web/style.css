@@ -256,6 +256,7 @@ fieldset.mode legend { font-weight: 600; padding: 0 4px; }
 .msg-head { font-size: 12px; color: var(--muted); display: flex; gap: 6px; flex-wrap: wrap; }
 .msg-who { font-weight: 700; color: var(--text); }
 .msg-body { white-space: pre-wrap; word-break: break-word; }
+.msg-label { font-weight: 600; word-break: break-word; }
 .msg-body.clamped { max-height: 4.6em; overflow: hidden; }
 .msg-more { background: none; border: 0; color: var(--focus); padding: 0; cursor: pointer; font-size: 13px; }
 .msg.k-ok { background: var(--ok-bg); }

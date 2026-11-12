@@ -298,9 +298,11 @@
         s = patchTask(s, key, (t) => ({ reviews: t.reviews.concat([{ verdict: ev.karar, feedback: ev.geri_bildirim, auto: !!ev.otomatik }]),
           lastReview: { verdict: ev.karar, at } }));
         const ok = ev.karar === 'approve';
-        const text = ev.otomatik ? `[${ev.gorev}] doğrulama başarısız → otomatik REVİZYON ↺`
-          : `[${ev.gorev}] ${ok ? 'ONAY ✓' : 'REVİZYON ↺'}${ev.geri_bildirim ? ' — ' + ev.geri_bildirim : ''}`;
-        return withChat(s, { kind: ok ? 'ok' : 'warn', who: ev.otomatik ? 'Orkestra' : reviewerName(s), agent: ev.otomatik ? null : reviewerName(s), text, long: true });
+        // Sabit önek (çevrilebilir) ile ajanın geri bildirimi (ham metin, çevrilmez) ayrı tutulur.
+        const label = ev.otomatik ? `[${ev.gorev}] doğrulama başarısız → otomatik REVİZYON ↺`
+          : `[${ev.gorev}] ${ok ? 'ONAY ✓' : 'REVİZYON ↺'}`;
+        const text = !ev.otomatik && ev.geri_bildirim ? ev.geri_bildirim : (ev.otomatik ? ev.geri_bildirim || '' : '');
+        return withChat(s, { kind: ok ? 'ok' : 'warn', who: ev.otomatik ? 'Orkestra' : reviewerName(s), agent: ev.otomatik ? null : reviewerName(s), label, text, long: true });
       }
       case 'dogrulama': {
         const v = { task: ev.gorev, cmd: ev.komut, code: ev.cikis_kodu, dur: ev.sure_sn, out: ev.cikti, ok: !!ev.basarili, at };
@@ -689,7 +691,8 @@
     const kindClass = { ok: 'k-ok', warn: 'k-warn', bad: 'k-bad', note: 'k-note' }[m.kind] || '';
     const body = el('div', { class: m.long ? 'msg-body raw' : 'msg-body', text: m.text || '' });
     const li = el('li', { class: `msg ${kindClass}`, agent: m.agent ? agentColor(m.agent) : null },
-      el('div', { class: 'msg-head' }, el('span', { class: 'msg-who', text: m.who || '' })), body);
+      el('div', { class: 'msg-head' }, el('span', { class: 'msg-who', text: m.who || '' })),
+      m.label ? el('div', { class: 'msg-label', text: m.label }) : null, m.text || !m.label ? body : null);
     if (m.long && (m.text || '').length > 220) {
       body.classList.add('clamped');
       const more = el('button', { type: 'button', class: 'msg-more', 'aria-expanded': 'false', text: 'genişlet' });
@@ -1279,6 +1282,8 @@
     [/^(yeni|değişti|silindi) · (.+)$/, (m, k, r) => `${{ yeni: 'new', 'değişti': 'changed', silindi: 'deleted' }[k]} · ${r.replace('bildirilmemiş', 'unreported')}`],
     [/^(.+) · (aşamalı|tek plan) · (.+)$/, (m, d, mode, st) => `${d} · ${mode === 'aşamalı' ? 'phased' : 'single plan'} · ${st.replace('bitti', 'done').replace('durduruldu', 'stopped').replace('hata', 'error').replace('yarım kaldı', 'incomplete')}`],
     [/^(\d+) çağrı/, '$1 calls'],
+    [/^aşama (\d+) bitti: ([\s\S]*)$/, 'phase $1 done: $2'], [/^başlangıç: ([\s\S]*)$/, 'start: $1'],
+    [/^devam başlangıcı$/, 'resume start'],
   ];
 
   function tr2en(text) {
