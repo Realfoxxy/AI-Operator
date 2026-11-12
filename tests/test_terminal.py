@@ -103,6 +103,23 @@ class TerminalTests(_Env):
         self.assertIn("İptal", self.out.getvalue())
         self.assertFalse((app.project / "ornek" / "notlar.md").exists())
 
+    def test_fast_profile_and_model(self):
+        app = TerminalApp(self.cfg, mock=True, mock_speed=0)
+        app.handle("/hizli ac")
+        s = app.cfg.settings
+        self.assertEqual((s.mode, s.max_consult_rounds, s.max_revisions), ("tek", 0, 0))
+        app.handle("/hizli kapat")
+        self.assertEqual(s.mode, "asamali")
+        app.handle("/model claude sonnet")
+        self.assertEqual(app.cfg.agents["claude"].command[-2:], ["--model", "sonnet"])
+        self.assertEqual(app.cfg.agents["claude"].stream_command[-2:], ["--model", "sonnet"])
+        app.handle("/model claude haiku")
+        self.assertEqual(app.cfg.agents["claude"].command.count("--model"), 1)
+        app.handle("/model claude varsayilan")
+        self.assertNotIn("--model", app.cfg.agents["claude"].command)
+        app.handle("/model claude a;rm")
+        self.assertIn("Geçersiz model adı", self.out.getvalue())
+
     def test_rejects_project_inside_repo(self):
         app = TerminalApp(self.cfg, mock=True, mock_speed=0)
         app.handle(f"/proje {ROOT}")

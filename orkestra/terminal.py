@@ -49,7 +49,8 @@ PROJECT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 COMMANDS = ["/yardim", "/hesaplar", "/baglan", "/kur", "/test", "/proje", "/projeler", "/mod", "/butce", "/asama",
             "/sikimod", "/devretme", "/otomatik", "/dogrulama", "/durum", "/gorevler", "/dosyalar", "/fark",
             "/kontrol", "/geri-al", "/not", "/duraklat", "/surdur", "/durdur", "/devam", "/gecmis", "/rapor",
-            "/kullanim", "/ayrinti", "/temizle", "/cikis"]
+            "/kullanim", "/ayrinti", "/hizli", "/model", "/temizle", "/cikis"]
+MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
 
 HELP = """
 KOMUTLAR  (düz metin yazarsan: boştayken yeni hedef olur, çalışma sürerken ekibe not olarak gider)
@@ -72,6 +73,9 @@ KOMUTLAR  (düz metin yazarsan: boştayken yeni hedef olur, çalışma sürerken
                /not [@ajan] <metin>      Ekibe veya tek ajana talimat notu
                /duraklat  /surdur  /durdur
                /ayrinti ac|kapat         Her model çağrısını da göster
+ Hız ve model  /hizli ac|kapat           Basit işler: tek plan, danışma ve denetim turu yok (çok daha hızlı)
+               /model [ajan] [model]     Ajanın modelini seç, ör. /model claude sonnet · /model claude haiku
+                                         /model copilot <model> · /model claude varsayilan
  Güvenlik ağı  /kontrol                  Kontrol noktaları (her aşama sonunda otomatik alınır)
                /fark <dosya>             Dosyanın çalıştırma başından bu yana farkı
                /geri-al <no>             Projeyi bir kontrol noktasına döndür (geri alma da geri alınabilir)
@@ -807,6 +811,62 @@ class TerminalApp:
             self.auto_yes = args[0] != "kapat"
         self.out.line(f"Salt-okunur planları otomatik onay: {'açık' if self.auto_yes else 'kapalı'}"
                       " (dosya yazan veya komut çalıştıran planlar her zaman sorulur)")
+
+    def cmd_hizli(self, args=None):
+        """Hızlı profil: basit işler için tek plan, danışma ve denetim turları kapalı (bu oturum için)."""
+        s = self.cfg.settings
+        if not hasattr(self, "_normal_profile"):
+            self._normal_profile = (s.mode, s.max_consult_rounds, s.max_revisions)
+        if args and args[0] in ("ac", "aç"):
+            s.mode, s.max_consult_rounds, s.max_revisions = "tek", 0, 0
+        elif args and args[0] == "kapat":
+            s.mode, s.max_consult_rounds, s.max_revisions = self._normal_profile
+        fast = s.mode == "tek" and s.max_consult_rounds == 0 and s.max_revisions == 0
+        self.out.line(f"Hızlı mod: {'açık' if fast else 'kapalı'}  (mod {s.mode}, danışma turu {s.max_consult_rounds}, "
+                      f"denetim turu {s.max_revisions})")
+        if fast:
+            self.out.line("  Görev başına tek çağrı; Claude yine plan yapar ve rapor yazar. Büyük işlerde /hizli kapat.", "dim")
+
+    def cmd_model(self, args=None):
+        """Ajanın modelini bu oturum için seçer (CLI'ın --model bayrağıyla). Kalıcı yapmak için config.toml."""
+        if not args:
+            for name, a in self.cfg.agents.items():
+                cur = next((a.command[i + 1] for i, x in enumerate(a.command[:-1]) if x == "--model"), "varsayılan")
+                self.out.line(f"  {name:<14} model: {cur}")
+            self.out.line("  Değiştir: /model <ajan> <model>   ör. /model claude sonnet · /model claude haiku · "
+                          "/model claude varsayilan", "dim")
+            self.out.line("  Copilot'un modelleri için PowerShell'de: copilot --help (--model satırı)", "dim")
+            return
+        name = args[0].lower()
+        if name not in self.cfg.agents or len(args) != 2:
+            self.out.line(f"Kullanım: /model <ajan> <model>. Ajanlar: {', '.join(self.cfg.agents)}", "yellow")
+            return
+        model = args[1]
+        if model not in ("varsayilan", "varsayılan") and not MODEL_RE.match(model):
+            self.out.line("Geçersiz model adı.", "yellow")
+            return
+        a = self.cfg.agents[name]
+
+        def strip(argv):
+            out, skip = [], False
+            for x in argv:
+                if skip:
+                    skip = False
+                    continue
+                if x == "--model":
+                    skip = True
+                    continue
+                out.append(x)
+            return out
+        a.command = strip(a.command)
+        a.stream_command = strip(a.stream_command)
+        if model not in ("varsayilan", "varsayılan"):
+            a.command = a.command + ["--model", model]
+            if a.stream_command:
+                a.stream_command = a.stream_command + ["--model", model]
+        self.out.line(f"✔ {name} modeli: {model} (bu oturum için; sonraki işlerde geçerli).", "green")
+        self.out.line(f"  Kalıcı yapmak için config.toml'da [agents.{name}] command listesine \"--model\", \"{model}\" ekle."
+                      if model not in ("varsayilan", "varsayılan") else "", "dim")
 
     def cmd_ayrinti(self, args=None):
         if args and args[0] in ("ac", "aç", "kapat"):
