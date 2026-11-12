@@ -638,5 +638,17 @@ class PackagingTests(unittest.TestCase):
             self.assertEqual(cfgmod.default_config_path(), d / "ozel.toml")
 
 
+class InstallerScriptTests(unittest.TestCase):
+    def test_powershell_script_has_utf8_bom(self):
+        # Windows PowerShell 5.1, BOM'suz .ps1 dosyalarını ANSI okur; Türkçe karakterler ve ✔ gibi
+        # simgeler bozulur ve betik ayrıştırılamaz. Bu yüzden kur.ps1 UTF-8 BOM ile başlamalı.
+        data = (ROOT / "kur.ps1").read_bytes()
+        self.assertTrue(data.startswith(b"\xef\xbb\xbf"), "kur.ps1 UTF-8 BOM ile başlamalı")
+        data.decode("utf-8")
+
+    def test_shell_script_has_no_crlf(self):
+        self.assertNotIn(b"\r\n", (ROOT / "kur.sh").read_bytes())
+
+
 if __name__ == "__main__":
     unittest.main()

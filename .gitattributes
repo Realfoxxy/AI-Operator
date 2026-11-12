@@ -1,0 +1,4 @@
+# kur.ps1 UTF-8 BOM ile saklanır (Windows PowerShell 5.1 BOM olmadan UTF-8 okumaz).
+*.ps1 text eol=crlf
+# kur.sh Windows klonlarında da LF kalmalı; CRLF bash betiğini bozar.
+*.sh text eol=lf

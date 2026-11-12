@@ -1,4 +1,4 @@
-# Orkestra kurulum yardımcısı (Windows PowerShell)
+﻿# Orkestra kurulum yardımcısı (Windows PowerShell)
 #
 # Çalıştırma:  powershell -ExecutionPolicy Bypass -File .\kur.ps1
 #

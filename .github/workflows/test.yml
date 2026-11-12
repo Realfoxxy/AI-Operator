@@ -25,6 +25,14 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Birim testleri
         run: python -m unittest -v
+      - name: kur.ps1 Windows PowerShell 5.1 ile ayrıştırılabilir mi?
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $errs = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$PWD\kur.ps1", [ref]$null, [ref]$errs) | Out-Null
+          if ($errs) { $errs | ForEach-Object { Write-Host $_.Message }; exit 1 }
+          Write-Host "kur.ps1 sorunsuz ayrıştırıldı."
       - name: Sahte ajanlarla uçtan uca çalıştırma
         shell: bash
         run: python -m orkestra run --mock --yes --workspace "$RUNNER_TEMP/orkestra-calisma" "CI denemesi"
