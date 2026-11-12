@@ -9,6 +9,8 @@ import os
 import re
 import shutil
 import signal
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Callable
 
@@ -361,10 +363,11 @@ class MockAgent(Agent):
     hiz: bekleme sürelerinin çarpanı (0 = beklemesiz; testler 0 kullanır).
     """
 
-    def __init__(self, cfg: AgentConfig, all_names: list[str], hiz: float = 1.0):
+    def __init__(self, cfg: AgentConfig, all_names: list[str], hiz: float = 1.0, writers: list[str] | None = None):
         super().__init__(cfg)
         self.all_names = list(all_names)
         self.hiz = hiz
+        self.writers = list(writers) if writers is not None else list(all_names)
 
     async def _sleep(self, sec: float) -> None:
         await asyncio.sleep(sec * self.hiz)
@@ -401,6 +404,8 @@ class MockAgent(Agent):
             ],
         }
         if phase == 1:
+            if plan["tasks"][0]["assignee"] not in self.writers and self.writers:
+                plan["tasks"][0]["assignee"] = self.writers[1 % len(self.writers)]   # yazma görevi yazabilen ajana
             plan["tasks"][0]["needs_write"] = True
             plan["tasks"][0]["files"] = ["ornek/notlar.md"]
             plan["phase_title"] = "İskelet"
@@ -448,3 +453,62 @@ class MockAgent(Agent):
                 text = f"[{self.name}] görev çıktısı."
             return await self._chunked(text, on_chunk)
         return f"[{self.name}] bilinmeyen rol."
+
+
+# ====================================================================== OllamaAgent (sürüm 0.4)
+
+class OllamaAgent(Agent):
+    """Bu bilgisayarda çalışan Ollama sunucusunu HTTP API'siyle kullanır (yalnızca standart kütüphane).
+
+    Dosya yazamaz (can_write=false): danışman, araştırma, özet ve belge metni gibi görevler içindir.
+    Adres config'te yalnızca 127.0.0.1/localhost olabilir; istekler vekil sunucuları atlar.
+    """
+
+    async def run(self, prompt: str, *, write: bool, workdir: Path, tag: str, on_chunk: OnChunk = None,
+                  session: str | None = None, meta: dict | None = None) -> str:
+        if write:
+            raise AgentError(f"{self.name}: bu ajan dosya yazamaz.")
+        cfg = self.cfg
+        url = cfg.api_url.rstrip("/") + "/api/chat"
+        body = json.dumps({"model": cfg.api_model, "messages": [{"role": "user", "content": prompt}],
+                           "stream": False}).encode("utf-8")
+
+        def call() -> dict:
+            req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))   # yerel adres: vekil yok
+            try:
+                with opener.open(req, timeout=cfg.timeout_s) as resp:
+                    return json.loads(resp.read().decode("utf-8"))
+            except urllib.error.HTTPError as e:
+                detail = e.read().decode("utf-8", "replace")[:300]
+                raise AgentError(f"{self.name}: Ollama hata döndürdü ({e.code}): {redact(detail)}") from None
+            except (urllib.error.URLError, OSError) as e:
+                raise AgentError(f"{self.name}: Ollama'ya bağlanılamadı ({cfg.api_url}). Ollama çalışıyor mu? "
+                                 f"Model indirildi mi (ollama pull {cfg.api_model})? Ayrıntı: {e}") from None
+            except ValueError:
+                raise AgentError(f"{self.name}: Ollama yanıtı okunamadı.") from None
+
+        data = await asyncio.to_thread(call)
+        msg = data.get("message") if isinstance(data, dict) else None
+        text = msg.get("content") if isinstance(msg, dict) else None
+        if not isinstance(text, str):
+            raise AgentError(f"{self.name}: Ollama yanıtında metin yok.")
+        if meta is not None:
+            meta["usage"] = {"girdi": _int0(data.get("prompt_eval_count")), "cikti": _int0(data.get("eval_count")),
+                             "maliyet_usd": None}
+        if on_chunk:
+            on_chunk(text)
+        return text.strip()[: cfg.max_output_chars]
+
+
+def make_agent(cfg: AgentConfig) -> Agent:
+    return OllamaAgent(cfg) if cfg.api == "ollama" else CliAgent(cfg)
+
+
+def build_agents(cfgs: dict[str, AgentConfig], *, mock: bool = False, hiz: float = 1.0) -> dict[str, Agent]:
+    """Config'teki etkin ajanları kurar. mock=True: hepsi sahte ajan olur."""
+    names = list(cfgs)
+    if mock:
+        writers = [n for n, c in cfgs.items() if c.can_write]
+        return {n: MockAgent(c, names, hiz=hiz, writers=writers) for n, c in cfgs.items()}
+    return {n: make_agent(c) for n, c in cfgs.items()}

@@ -143,7 +143,8 @@ def load_state(run_dir: Path, cfg: Config) -> tuple[RunState, list[Plan]]:
         try:
             plan = parse_plan(json.dumps(plan_dict, ensure_ascii=False), list(cfg.agents),
                               cfg.settings.max_tasks, verify_names=[c.name for c in cfg.verify.commands],
-                              protected=cfg.guard.protected_paths, phased=phased)
+                              protected=cfg.guard.protected_paths, phased=phased,
+                              writers={n for n, a in cfg.agents.items() if a.can_write})
         except PlanError as e:
             raise StateError(f"{where}: plan yeniden doğrulanamadı: {e}") from e
         ids = {t.id for t in plan.tasks}

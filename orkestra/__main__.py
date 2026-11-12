@@ -12,7 +12,7 @@ import threading
 from pathlib import Path
 
 from . import __version__
-from .agents import AgentError, CliAgent, MockAgent
+from .agents import AgentError, CliAgent, build_agents
 from .approvals import CliApprover
 from .config import Config, ConfigError, default_config_path, load_config
 from .engine import BudgetExceeded, Orchestrator, RunCancelled, RunStopped
@@ -65,10 +65,7 @@ def _check_workspace(cfg: Config, workspace: Path) -> Path:
 
 
 def _make_agents(cfg: Config, mock: bool):
-    names = list(cfg.agents)
-    if mock:
-        return {n: MockAgent(c, names) for n, c in cfg.agents.items()}
-    return {n: CliAgent(c) for n, c in cfg.agents.items()}
+    return build_agents(cfg.agents, mock=mock)
 
 
 async def _drive(orch: Orchestrator, goal: str) -> str:
@@ -318,6 +315,23 @@ def cmd_hesap(args) -> int:
     return 0
 
 
+# ====================================================================== ekip yönetimi (sürüm 0.4)
+
+def cmd_ekip(args) -> int:
+    """katalog | ekle <ad> | cikar <ad> | ajanlar | ajan ac|kapat <ad> — terminal komutlarının CLI karşılığı."""
+    try:
+        cfg = _load_config(args)
+    except ConfigError as e:
+        _err(str(e))
+        return 2
+    from .terminal import TerminalApp
+    app = TerminalApp(cfg)
+    fn = {"katalog": app.cmd_katalog, "ekle": app.cmd_ekle, "cikar": app.cmd_cikar,
+          "ajanlar": app.cmd_ajanlar, "ajan": app.cmd_ajan}[args.komut]
+    fn(args.args)
+    return 0
+
+
 # ====================================================================== argparse
 
 def build_parser() -> argparse.ArgumentParser:
@@ -331,6 +345,16 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--mock", action="store_true", help="sahte ajanlarla dene (abonelik harcamaz)")
     t.add_argument("--config", help="config dosyası")
     t.set_defaults(func=cmd_terminal)
+
+    for name, help_text in (("katalog", "eklenebilir yapay zekâları listele"),
+                            ("ekle", "katalogdan ekibe ajan ekle: ekle <ad>"),
+                            ("cikar", "katalogdan eklenen ajanı çıkar: cikar <ad>"),
+                            ("ajanlar", "ekipteki ajanları listele"),
+                            ("ajan", "ajanı aç/kapat: ajan ac|kapat <ad>")):
+        e = sub.add_parser(name, help=help_text)
+        e.add_argument("args", nargs="*")
+        e.add_argument("--config", help="config dosyası")
+        e.set_defaults(func=cmd_ekip)
 
     h = sub.add_parser("hesap", help="Claude, Gemini ve Copilot hesaplarını bağla")
     h.add_argument("--config", help="config dosyası")

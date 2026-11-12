@@ -47,6 +47,7 @@ Herkes **kendi** Claude Pro, Google AI Pro ve GitHub Copilot hesabını bağlar 
 - **Plan düzenleme (0.3):** Onaylamadan önce görevi başka ajana ata, talimatı değiştir.
 - **Sıkı mod ve Docker yalıtımı (0.3):** Kesin değişiklik takibi; testler ağsız kapsayıcıda.
 - **Kullanım göstergesi, oturum sürekliliği, bildirimler ve İngilizce arayüz (0.3).**
+- **Yapay zekâ kataloğu (0.4):** `/katalog` ve `/ekle` ile isteğe bağlı ekip üyeleri: ek Claude'lar, OpenAI Codex, Qwen Code, Cursor, yerel Ollama. Hiçbiri zorunlu değil.
 
 ## Hızlı kurulum
 

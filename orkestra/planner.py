@@ -123,7 +123,8 @@ def _text(obj: dict, key: str, where: str) -> str:
 
 
 def parse_plan(text: str, agent_names, max_tasks: int, *, verify_names=(), protected=(),
-               phased: bool = False) -> Plan:
+               phased: bool = False, writers=None) -> Plan:
+    """writers: dosya yazabilen ajanlar (None = hepsi). Yazamayan ajana yazma görevi verilemez."""
     """Planlayıcı çıktısını sıkı biçimde doğrular ve Plan döndürür."""
     data = extract_json(text)
     if not isinstance(data, dict):
@@ -172,6 +173,8 @@ def parse_plan(text: str, agent_names, max_tasks: int, *, verify_names=(), prote
         needs_write = raw.get("needs_write", False)
         if not isinstance(needs_write, bool):
             raise PlanError(f"{where}: 'needs_write' true veya false olmalı.")
+        if needs_write and writers is not None and assignee.strip().lower() not in writers:
+            raise PlanError(f"{where}: '{assignee.strip().lower()}' dosya yazamaz; yazma görevi başka ajana verilmeli.")
         files = _parse_files(raw.get("files"), where, needs_write, protected)
         verify = raw.get("verify") or []
         if not isinstance(verify, list) or not all(isinstance(v, str) for v in verify):

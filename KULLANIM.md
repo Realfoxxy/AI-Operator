@@ -93,6 +93,40 @@ Terminali açmadan bağlamak istersen `python -m orkestra hesap` komutunu kullan
 
 ---
 
+## 3b. Ekibe başka yapay zekâlar ekle (isteğe bağlı)
+
+Hiçbir ek yapay zekâ zorunlu değil; Orkestra yalnızca Claude ile de çalışır. İstersen terminalde:
+
+```
+/katalog            → eklenebilir yapay zekâları listeler
+/ekle codex         → seçtiğini ekibe ekler (önce bilgileri gösterir ve onay ister)
+/kur                → eksik programı kurar (npm ile kurulanlar için)
+/baglan codex       → kendi hesabınla giriş
+/test codex         → çalıştığını doğrular
+/cikar codex        → ekipten çıkarır
+/ajanlar            → ekipteki herkesi açık/kapalı gösterir
+/ajan kapat gemini  → bir ajanı kapatır (config.toml'u elle düzenlemeye gerek yok)
+/ajan ac gemini     → geri açar
+```
+
+| Ad | Ne | Ücret | Durum |
+|---|---|---|---|
+| `claude-kodcu`, `claude-testci` | Ek Claude ekip üyeleri (kodlama / test ve inceleme) | Mevcut Claude aboneliğin (aynı kota) | hazır |
+| `codex` | OpenAI Codex CLI: farklı model ailesi, güçlü kod yazarı | ChatGPT Plus/Pro | deneysel |
+| `qwen` | Qwen Code: Gemini CLI türevi | Ücretsiz katman (koşullar değişebilir) | deneysel |
+| `cursor` | Cursor CLI | Cursor aboneliği | deneysel |
+| `ollama` | Bu bilgisayarda çalışan yerel model; **dosya yazamaz**, danışma ve özet işleri alır | Ücretsiz | hazır |
+
+- **Deneysel:** Komutlar aracın belgelerinden alındı ama gerçek bir hesapla denenmedi. Ekledikten sonra `/test <ad>` ile doğrula; çalışmazsa `/cikar <ad>`.
+- **Kota:** Ek Claude üyeleri aynı aboneliği kullandığı için kota daha hızlı biter.
+- **Ollama:** Dosya yazamaz; planlayıcı ona yazma görevi vermez. Kodun bilgisayarından dışarı çıkmaz.
+- **Güvenlik:** Her değişiklikten önce `config.toml.yedek` alınır; geçersiz bir değişiklik dosyaya hiç yazılmaz.
+- **Kullanım koşulları:** Her aracın koşullarında başka uygulamalardan çağırmaya izin verildiğinden emin ol.
+
+Komut satırı karşılıkları: `orkestra katalog`, `orkestra ekle <ad>`, `orkestra cikar <ad>`, `orkestra ajanlar`, `orkestra ajan ac|kapat <ad>`.
+
+---
+
 ## 4. İlk projen
 
 ```
@@ -190,6 +224,8 @@ Abonelik harcamadan denemek için: `python -m orkestra --mock` (terminal) veya `
 | `/not [@ajan] <metin>` · `/duraklat` · `/surdur` · `/durdur` | Çalışmaya müdahale |
 | `/devam [no]` · `/gecmis` · `/rapor [no]` | Yarım kalanı sürdür, geçmiş, raporlar |
 | `/kontrol` · `/fark <dosya>` · `/geri-al <no>` | Kontrol noktaları |
+| `/katalog` · `/ekle <ad>` · `/cikar <ad>` · `/ajanlar` · `/ajan ac\|kapat <ad>` | Ekibi yönet (isteğe bağlı yapay zekâlar) |
+| `/hizli ac\|kapat` · `/model [ajan] [model]` | Basit işlerde hız; ajan modeli seçimi |
 | `/ayrinti ac\|kapat` · `/temizle` · `/yardim` · `/cikis` | Diğer |
 
 Komut satırı karşılıkları: `orkestra run "hedef"`, `orkestra run --asamali "hedef"`, `orkestra devam runs/<zaman>`, `orkestra ui`, `orkestra doctor`, `orkestra hesap`.

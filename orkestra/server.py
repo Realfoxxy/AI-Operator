@@ -24,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from .agents import AgentError, CliAgent, MockAgent
+from .agents import AgentError, build_agents
 from .approvals import Approver
 from .checkpoints import CheckpointError, CheckpointStore
 from .config import Config, normalize_rel_path
@@ -292,10 +292,7 @@ class OrkestraServer:
         return ws
 
     def _make_agents(self, cfg: Config):
-        names = list(cfg.agents)
-        if self.mock:
-            return {n: MockAgent(c, names, hiz=self.mock_speed) for n, c in cfg.agents.items()}
-        return {n: CliAgent(c) for n, c in cfg.agents.items()}
+        return build_agents(cfg.agents, mock=self.mock, hiz=self.mock_speed)
 
     def start_run(self, goal: str, workspace: str | None = None, mode: str | None = None) -> dict:
         if not isinstance(goal, str) or not goal.strip():

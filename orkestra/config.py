@@ -41,6 +41,11 @@ class AgentConfig:
     # Sürüm 0.3: oturum sürekliliği ve kullanım bilgisi (yalnızca JSON çıktılı CLI'lar)
     resume_args: list[str] = field(default_factory=list)   # en az birinde {session} olmalı
     session_field: str = ""                                 # JSON çıktısındaki oturum kimliği alanı
+    # Sürüm 0.4: katalog ajanları
+    can_write: bool = True          # false: ajan dosya yazamaz; planlayıcı ona yazma görevi veremez
+    api: str = ""                   # "" (CLI) | "ollama" (yerel HTTP API)
+    api_model: str = ""             # api ajanlarında model adı (ör. qwen2.5-coder)
+    api_url: str = "http://127.0.0.1:11434"   # yalnızca bu bilgisayar
 
 
 @dataclass
@@ -258,6 +263,14 @@ def _parse_agent(name: str, raw: dict) -> AgentConfig:
         a.stream_command = _str_list(raw["stream_command"], w("stream_command"))
     if "color" in raw:
         a.color = _str(raw["color"], w("color"))
+    if "can_write" in raw:
+        a.can_write = _bool(raw["can_write"], w("can_write"))
+    if "api" in raw:
+        a.api = _choice(raw["api"], w("api"), ("", "ollama"))
+    if "api_model" in raw:
+        a.api_model = _str(raw["api_model"], w("api_model"))
+    if "api_url" in raw:
+        a.api_url = _str(raw["api_url"], w("api_url"), allow_empty=False)
     if "resume_args" in raw:
         a.resume_args = _str_list(raw["resume_args"], w("resume_args"))
     if "session_field" in raw:
@@ -270,6 +283,13 @@ def _parse_agent(name: str, raw: dict) -> AgentConfig:
         raise ConfigError(f"{w('json_field')}: output=\"json\" ise zorunludur.")
     if a.stream_format.endswith("-stream-json") and not a.stream_command:
         raise ConfigError(f"{w('stream_command')}: stream_format=\"{a.stream_format}\" ise zorunludur.")
+    if a.api:
+        # Yerel API ajanları dosya yazamaz ve yalnızca bu bilgisayardaki sunucuya bağlanır (kod dışarı gitmez).
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,99}", a.api_model or ""):
+            raise ConfigError(f"{w('api_model')}: api ajanlarında geçerli bir model adı zorunludur.")
+        if not re.fullmatch(r"http://(127\.0\.0\.1|localhost|\[::1\]):\d{1,5}/?", a.api_url):
+            raise ConfigError(f"{w('api_url')}: yalnızca bu bilgisayardaki adres olabilir (ör. http://127.0.0.1:11434).")
+        a.can_write = False
     if a.resume_args and not any("{session}" in x for x in a.resume_args):
         raise ConfigError(f"{w('resume_args')}: en az bir argümanda {{session}} olmalı.")
     if a.resume_args and not a.session_field:

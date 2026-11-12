@@ -73,7 +73,10 @@ def data_block(label: str, text: str, source: str) -> str:
 
 
 def roster(agents: Iterable) -> str:
-    return "\n".join(f"- {a.name}: {a.display} — güçlü yönleri: {a.strengths or '-'}" for a in agents)
+    def line(a) -> str:
+        cap = "" if getattr(a, "can_write", True) else " — DOSYA YAZAMAZ (yalnızca metin üretir; needs_write görevi verme)"
+        return f"- {a.name}: {a.display} — güçlü yönleri: {a.strengths or '-'}{cap}"
+    return "\n".join(line(a) for a in agents)
 
 
 def _lang(lang: str) -> str:

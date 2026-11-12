@@ -19,7 +19,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from .agents import AgentError, CliAgent
+from .agents import AgentError, CliAgent, make_agent
 from .config import AgentConfig, Config, user_config_dir
 from .security import SecurityError, check_argv, redact
 
@@ -46,6 +46,19 @@ TOOLS = {
                   "Giriş bitince /exit yazarak çık."],
     },
 }
+# Katalogdaki ek araçlar (sürüm 0.4): giriş adımları katalogdan gelir.
+def _catalog_tools() -> dict:
+    from .katalog import CATALOG
+    out = {}
+    for e in CATALOG:
+        prog = e.ayar.get("command", [""])[0]
+        if prog and prog not in TOOLS:
+            out[prog] = {"paket": e.npm, "abonelik": e.ucret, "giris": e.giris,
+                         "etkilesimli": not e.ayar.get("api")}
+    return out
+
+
+TOOLS.update(_catalog_tools())
 PROBE_PROMPT = "Bu bir bağlantı testidir. Başka hiçbir şey yapma; yalnızca TAMAM yaz."
 STATUS_FILE = "hesaplar.json"
 
@@ -130,7 +143,7 @@ async def probe(acfg: AgentConfig, workspace: Path, timeout_s: int = 180) -> tup
     test_cfg = AgentConfig(**{**acfg.__dict__, "timeout_s": min(acfg.timeout_s, timeout_s), "stream_format": "none",
                               "resume_args": []})
     try:
-        out = await CliAgent(test_cfg).run(PROBE_PROMPT, write=False, workdir=Path(workspace), tag="baglanti-testi")
+        out = await make_agent(test_cfg).run(PROBE_PROMPT, write=False, workdir=Path(workspace), tag="baglanti-testi")
     except (AgentError, SecurityError, OSError) as e:
         msg = redact(str(e))
         save_status(acfg.name, False, msg)

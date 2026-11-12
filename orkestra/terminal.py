@@ -27,11 +27,11 @@ import threading
 import time
 from pathlib import Path
 
-from . import __version__, accounts
-from .agents import AgentError, CliAgent, MockAgent
+from . import __version__, accounts, configedit, katalog
+from .agents import AgentError, build_agents
 from .approvals import Approver, YES_ANSWERS, edit_plan_interactive, plan_needs_manual_approval, VERIFY_WARNING
 from .checkpoints import CheckpointError, CheckpointStore
-from .config import Config, VerifyCommand, normalize_rel_path, user_config_dir
+from .config import Config, VerifyCommand, load_config, normalize_rel_path, user_config_dir
 from .engine import BudgetExceeded, Orchestrator, RunCancelled, RunStopped
 from .events import EventBus
 from .planner import PlanError
@@ -49,7 +49,8 @@ PROJECT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 COMMANDS = ["/yardim", "/hesaplar", "/baglan", "/kur", "/test", "/proje", "/projeler", "/mod", "/butce", "/asama",
             "/sikimod", "/devretme", "/otomatik", "/dogrulama", "/durum", "/gorevler", "/dosyalar", "/fark",
             "/kontrol", "/geri-al", "/not", "/duraklat", "/surdur", "/durdur", "/devam", "/gecmis", "/rapor",
-            "/kullanim", "/ayrinti", "/hizli", "/model", "/temizle", "/cikis"]
+            "/kullanim", "/ayrinti", "/hizli", "/model", "/katalog", "/ekle", "/cikar", "/ajanlar", "/ajan",
+            "/temizle", "/cikis"]
 MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
 
 HELP = """
@@ -59,6 +60,10 @@ KOMUTLAR  (düz metin yazarsan: boştayken yeni hedef olur, çalışma sürerken
                /kur                      Eksik CLI araçlarını npm ile kur
                /baglan [ajan|hepsi]      Hesabını bağla (resmi giriş ekranı açılır)
                /test [ajan|hepsi]        Bağlantıyı küçük bir istemle dene
+ Ekip          /katalog                  Eklenebilir yapay zekâlar (hiçbiri zorunlu değil)
+               /ekle <ad>  /cikar <ad>   Katalogdan ekip üyesi ekle / çıkar
+               /ajanlar                  Ekipteki tüm ajanlar (açık/kapalı)
+               /ajan ac|kapat <ad>       Bir ajanı aç veya kapat (ör. /ajan kapat gemini)
  Proje         /proje [ad|yol]           Proje seç veya oluştur (ad: proje kökünde alt klasör)
                /projeler                 Projeleri listele
                /gecmis   /rapor [no]     Bu projedeki çalıştırmalar ve raporları
@@ -215,11 +220,7 @@ class EngineRunner:
         self.printer = TerminalPrinter(app)
         self.bus.add_listener(self.printer)
         self.approver = TerminalApprover(app)
-        names = list(cfg.agents)
-        if app.mock:
-            agents = {n: MockAgent(c, names, hiz=app.mock_speed) for n, c in cfg.agents.items()}
-        else:
-            agents = {n: CliAgent(c) for n, c in cfg.agents.items()}
+        agents = build_agents(cfg.agents, mock=app.mock, hiz=app.mock_speed)
         self.loop: asyncio.AbstractEventLoop | None = None
         self.orch: Orchestrator | None = None
         self._agents, self._state, self._plans = agents, state, plans
@@ -721,6 +722,11 @@ class TerminalApp:
             self.out.line(f"\n── {name} hesabını bağla ({info.get('abonelik', a.display)}) ──", "bold", "cyan")
             for i, step in enumerate(info.get("giris", ["CLI açılınca giriş yap ve çık."]), 1):
                 self.out.line(f"  {i}. {step}")
+            if info.get("etkilesimli") is False:
+                # Yerel API ajanı (ör. Ollama): açılacak bir giriş ekranı yok.
+                if self._confirm("Bağlantıyı test edelim mi?", default=True):
+                    self._probe(name)
+                continue
             if not self._confirm(f"{a.command[0]} şimdi açılsın mı?", default=True):
                 continue
             try:
@@ -867,6 +873,112 @@ class TerminalApp:
         self.out.line(f"✔ {name} modeli: {model} (bu oturum için; sonraki işlerde geçerli).", "green")
         self.out.line(f"  Kalıcı yapmak için config.toml'da [agents.{name}] command listesine \"--model\", \"{model}\" ekle."
                       if model not in ("varsayilan", "varsayılan") else "", "dim")
+
+    # -------------------------------------------------------------- ekip: katalog, ekle, çıkar, aç/kapat (0.4)
+
+    def _reload_agents(self) -> None:
+        new = load_config(self.cfg.path)
+        self.cfg.agents = new.agents
+
+    def _team_busy(self) -> bool:
+        if self.runner and self.runner.active:
+            self.out.line("Çalıştırma sürerken ekip değiştirilemez. Önce /durdur.", "yellow")
+            return True
+        return False
+
+    def cmd_katalog(self, args=None) -> None:
+        states = configedit.agent_states(self.cfg.path)
+        self.out.line("Eklenebilir yapay zekâlar (isteğe bağlı; eklemek için /ekle <ad>):", "bold")
+        for e in katalog.CATALOG:
+            if e.ad in states:
+                st = self.out.c("✔ ekipte" if states[e.ad] else "○ ekli ama kapalı", "green" if states[e.ad] else "yellow")
+            else:
+                st = self.out.c("eklenmedi", "dim")
+            tag = self.out.c(" [deneysel]", "yellow") if e.durum == "deneysel" else ""
+            self.out.line(f"  {e.ad:<14} {e.baslik}{tag}  —  {st}")
+            self.out.line(f"  {'':<14} {e.aciklama}", "dim")
+            self.out.line(f"  {'':<14} Ücret: {e.ucret}", "dim")
+        self.out.line("  Ayrıntı: /ekle <ad> önce bilgileri gösterir ve onay ister. Gemini gibi hazır ajanlar: /ajan ac|kapat <ad>",
+                      "dim")
+
+    def cmd_ekle(self, args=None) -> None:
+        if not args:
+            self.out.line("Kullanım: /ekle <ad>  (liste için /katalog)", "yellow")
+            return
+        if self._team_busy():
+            return
+        e = katalog.get(args[0].lower())
+        if e is None:
+            self.out.line(f"Katalogda '{args[0]}' yok. Liste için /katalog", "yellow")
+            return
+        o = self.out
+        o.line(f"\n── {e.baslik} ({e.saglayici}) ──", "bold", "cyan")
+        o.line(f"  {e.aciklama}")
+        o.line(f"  Ücret/abonelik: {e.ucret}")
+        if e.durum == "deneysel":
+            o.line("  Durum: DENEYSEL — komutlar aracın belgelerinden alındı ama gerçek bir hesapla burada denenmedi. "
+                   "Ekledikten sonra /test ile doğrula.", "yellow")
+        for n in e.notlar:
+            o.line(f"  • {n}", "dim")
+        if e.kaynak:
+            o.line(f"  Kaynak: {e.kaynak}", "dim")
+        o.line("  Bu aracın kullanım koşullarında başka uygulamalardan çağırmaya izin verildiğinden emin ol.", "dim")
+        if sys.stdin.isatty() and not self._confirm("Ekibe eklensin mi?", default=True):
+            return
+        try:
+            configedit.add_agent(self.cfg.path, e.ad, e.ayar)
+            self._reload_agents()
+        except (configedit.ConfigEditError, OSError) as ex:
+            o.line(f"✖ Eklenemedi: {ex}", "red")
+            return
+        o.line(f"✔ {e.ad} ekibe eklendi. (Yedek: {self.cfg.path.name}.yedek)", "green")
+        if not shutil.which(e.ayar["command"][0]):
+            if e.npm:
+                o.line(f"  Kurulu değil. Kurmak için: /kur   (npm install -g {e.npm})", "yellow")
+            elif e.kurulum:
+                o.line(f"  Kurulu değil. {e.kurulum}", "yellow")
+        o.line(f"  Sonra: /baglan {e.ad} ve /test {e.ad}", "cyan")
+
+    def cmd_cikar(self, args=None) -> None:
+        if not args:
+            self.out.line("Kullanım: /cikar <ad>", "yellow")
+            return
+        if self._team_busy():
+            return
+        ad = args[0].lower()
+        try:
+            configedit.remove_agent(self.cfg.path, ad)
+            self._reload_agents()
+        except (configedit.ConfigEditError, OSError) as ex:
+            self.out.line(f"✖ {ex}", "red")
+            return
+        self.out.line(f"✔ {ad} ekipten çıkarıldı.", "green")
+
+    def cmd_ajanlar(self, args=None) -> None:
+        states = configedit.agent_states(self.cfg.path)
+        s = self.cfg.settings
+        self.out.line("Ekip:", "bold")
+        for name, on in states.items():
+            role = "planlayıcı" if name == s.planner else ("denetçi" if name == s.reviewer else "ekip")
+            src = " (katalog)" if configedit.from_catalog(self.cfg.path, name) else ""
+            mark = self.out.c("● açık", "green") if on else self.out.c("○ kapalı", "dim")
+            self.out.line(f"  {name:<14} {role:<11} {mark}{src}")
+        self.out.line("  Aç/kapat: /ajan ac <ad> · /ajan kapat <ad>   Yeni ekle: /katalog", "dim")
+
+    def cmd_ajan(self, args=None) -> None:
+        if not args or len(args) != 2 or args[0] not in ("ac", "aç", "kapat"):
+            self.out.line("Kullanım: /ajan ac <ad>  veya  /ajan kapat <ad>", "yellow")
+            return
+        if self._team_busy():
+            return
+        ad, on = args[1].lower(), args[0] != "kapat"
+        try:
+            configedit.set_enabled(self.cfg.path, ad, on)
+            self._reload_agents()
+        except (configedit.ConfigEditError, OSError) as ex:
+            self.out.line(f"✖ {ex}", "red")
+            return
+        self.out.line(f"✔ {ad} {'açıldı' if on else 'kapatıldı'}.", "green")
 
     def cmd_ayrinti(self, args=None):
         if args and args[0] in ("ac", "aç", "kapat"):

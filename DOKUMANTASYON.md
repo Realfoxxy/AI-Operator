@@ -1359,3 +1359,13 @@ Ajan config'inde `resume_args` (en az birinde `{session}`) ve `session_field` ta
 ### 17.10 Arayüz
 
 Plan düzenleyici, Dosyalar sekmesinde İçerik/Fark görünümü ve kontrol noktası listesi, üst çubukta kullanım çipi, tarayıcı bildirimleri (yalnızca kullanıcı izin verirse ve sekme arka plandayken) ve İngilizce arayüz eklendi. Dil çevirisi arayüz metinlerine uygulanır; `.raw` işaretli ajan içeriği çevrilmez.
+
+---
+
+## 18. Sürüm 0.4: Yapay Zekâ Kataloğu
+
+- **`katalog.py`:** Eklenebilir ajanların sabit ayar blokları. Durum `hazır` (Orkestra'nın zaten kullandığı yöntem veya kendi kodu) veya `deneysel` (bayraklar belgelerden alındı, gerçek hesapla denenmedi) olabilir. Bloklar model çıktısından türetilmez.
+- **`configedit.py`:** `config.toml`'u güvenle düzenler. Değişiklik önce geçici kopyada `load_config` ile doğrulanır; geçersizse asıl dosyaya dokunulmaz. Önce `config.toml.yedek` alınır; yazma atomiktir; CRLF/LF korunur. Katalog blokları `# >>> orkestra-katalog: <ad>` / `# <<< ...` işaretleriyle eklenir; `/cikar` yalnızca işaretli bloğu siler. `/ajan ac|kapat` ilgili bölümdeki `enabled` satırını ekler veya günceller. Planlayıcıyı veya denetçiyi kapatan değişiklik doğrulamada reddedilir.
+- **Dosya yazamayan ajanlar:** `[agents.<ad>] can_write = false`. `parse_plan(..., writers=...)` bu ajanlara `needs_write` görevi verilmesini reddeder. Ekip listesinde "DOSYA YAZAMAZ" notu bulunur. Devretme, yazma görevlerini yalnızca yazabilen ajanlara verir.
+- **Yerel API ajanı (`api = "ollama"`):** `OllamaAgent`, `POST <api_url>/api/chat` (`stream: false`) ile çalışır ve yalnızca standart kütüphaneyi kullanır. `api_url` yalnızca `127.0.0.1`, `localhost` veya `[::1]` olabilir; istekler vekil sunucuları atlar. Her zaman `can_write = false`. Kullanım `prompt_eval_count` ve `eval_count` alanlarından okunur.
+- **Komutlar:** terminalde `/katalog`, `/ekle`, `/cikar`, `/ajanlar`, `/ajan ac|kapat`; CLI'da `orkestra katalog|ekle|cikar|ajanlar|ajan`.

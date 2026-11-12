@@ -251,11 +251,16 @@ class Orchestrator:
     def _usable(self, name: str) -> bool:
         return name in self.agents and name not in self._exhausted
 
-    def _alternative(self, failed: str, tried: set[str]) -> str | None:
+    @property
+    def _writers(self) -> set[str]:
+        return {n for n, a in self.agents.items() if a.cfg.can_write}
+
+    def _alternative(self, failed: str, tried: set[str], need_write: bool = False) -> str | None:
         if not self.settings.fallback:
             return None
         order = [self.settings.planner] + [n for n in self.agents if n != self.settings.planner]
-        return next((n for n in order if n != failed and n not in tried and self._usable(n)), None)
+        return next((n for n in order if n != failed and n not in tried and self._usable(n)
+                     and (not need_write or n in self._writers)), None)
 
     def effective_assignee(self, task: Task) -> str:
         return self._override.get(task.id, task.assignee)
@@ -271,7 +276,7 @@ class Orchestrator:
         tried: set[str] = set()
         while True:
             if not self._usable(agent):
-                alt = self._alternative(agent, tried)
+                alt = self._alternative(agent, tried, need_write=write)
                 if alt is None:
                     raise AgentError(f"{agent}: bu çalıştırmada kullanılamıyor ve devredilecek ajan yok.")
                 self._handover(agent, alt, task, role, "ajan daha önce kullanılamaz işaretlendi")
@@ -285,7 +290,7 @@ class Orchestrator:
             except AgentError as e:
                 if QUOTA_RE.search(str(e)):
                     self._exhausted.add(agent)
-                alt = self._alternative(agent, tried)
+                alt = self._alternative(agent, tried, need_write=write)
                 if alt is None:
                     raise
                 self._handover(agent, alt, task, role, redact(str(e))[:300])
@@ -508,6 +513,7 @@ class Orchestrator:
 
         def parse(text: str) -> Plan:
             return parse_plan(text, names, s.max_tasks, verify_names=verify_names, protected=protected,
+                              writers=self._writers,
                               phased=phase is not None)
 
         out, used = await self._call_fb(s.planner, build, role="planlayıcı", tag="plan")
@@ -842,7 +848,7 @@ class Orchestrator:
 
         def validate(d: dict) -> Plan:
             # Kullanıcının düzenlediği plan da aynı sıkı kurallarla doğrulanır (kural 9).
-            return parse_plan(json.dumps(d, ensure_ascii=False), list(self.agents), s.max_tasks,
+            return parse_plan(json.dumps(d, ensure_ascii=False), list(self.agents), s.max_tasks, writers=self._writers,
                               verify_names=[c.name for c in self.config.verify.commands],
                               protected=self.config.guard.protected_paths, phased=phased)
 
