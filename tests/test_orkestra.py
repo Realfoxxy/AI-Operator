@@ -660,7 +660,9 @@ class InstallerScriptTests(unittest.TestCase):
 
     def test_old_python_gets_clear_message(self):
         code = "import sys; sys.version_info = (3, 9, 0); import orkestra"
-        proc = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True)
+        env = dict(os.environ, PYTHONIOENCODING="utf-8")
+        proc = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, env=env,
+                              encoding="utf-8", errors="replace")
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("Python 3.11 veya üstünü gerektirir", proc.stderr)
         self.assertNotIn("Traceback", proc.stderr)
