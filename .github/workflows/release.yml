@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       surum:
-        description: "Sürüm etiketi (ör. v0.2.0)"
+        description: "Sürüm etiketi (ör. v0.3.0)"
         required: true
-        default: "v0.2.0"
+        default: "v0.3.0"
 
 permissions:
   contents: write

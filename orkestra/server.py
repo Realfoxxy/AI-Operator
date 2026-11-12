@@ -26,6 +26,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from .agents import AgentError, CliAgent, MockAgent
 from .approvals import Approver
+from .checkpoints import CheckpointError, CheckpointStore
 from .config import Config, normalize_rel_path
 from .engine import BudgetExceeded, Orchestrator, RunCancelled, RunStopped
 from .events import EventBus
@@ -95,20 +96,29 @@ class WebApprover(Approver):
     """
 
     def __init__(self, loop: asyncio.AbstractEventLoop):
+        super().__init__()
         self.loop = loop
         self._lock = threading.Lock()
         self._pending: dict[str, tuple[asyncio.Future, str, dict]] = {}
+        self._validators: dict[str, object] = {}
 
-    async def request(self, kind: str, payload: dict, istek_id: str = "") -> str:
+    async def request(self, kind: str, payload: dict, istek_id: str = "", validate=None) -> str:
         fut = self.loop.create_future()
         istek_id = istek_id or secrets.token_hex(6)
         with self._lock:
             self._pending[istek_id] = (fut, kind, payload)
+            if validate is not None:
+                self._validators[istek_id] = validate
         try:
             return await fut
         finally:
             with self._lock:
                 self._pending.pop(istek_id, None)
+                self._validators.pop(istek_id, None)
+
+    def pop_edit(self, istek_id: str):
+        with self._lock:
+            return self._edits.pop(istek_id, None)
 
     def pending(self) -> dict | None:
         with self._lock:
@@ -116,15 +126,29 @@ class WebApprover(Approver):
                 return {"istek_id": istek_id, "istek_turu": kind, "veri": payload}
         return None
 
-    def resolve(self, istek_id: str, karar: str) -> None:
-        """HTTP iş parçacığından çağrılır; future, motorun döngüsünde çözülür."""
+    def resolve(self, istek_id: str, karar: str, plan=None) -> None:
+        """HTTP iş parçacığından çağrılır; future, motorun döngüsünde çözülür.
+
+        plan verilirse (yalnızca plan onayında): kullanıcının düzenlediği plan motorun kurallarıyla
+        doğrulanır; geçersizse 400 döner ve istek bekler durumda kalır.
+        """
         with self._lock:
             item = self._pending.get(istek_id)
+            validate = self._validators.get(istek_id)
         if item is None:
             raise ApiError(404, "Bekleyen böyle bir onay isteği yok.")
         fut, kind, _ = item
         if karar not in ALLOWED_DECISIONS.get(kind, set()):
             raise ApiError(400, f"Geçersiz karar: {karar!r}")
+        if plan is not None:
+            if kind != "plan" or karar != "onay" or validate is None or not isinstance(plan, dict):
+                raise ApiError(400, "Plan yalnızca plan onayında düzenlenebilir.")
+            try:
+                edited = validate(plan)
+            except PlanError as e:
+                raise ApiError(400, f"Düzenlenen plan geçersiz: {e}") from e
+            with self._lock:
+                self._edits[istek_id] = edited
 
         def _set():
             if not fut.done():
@@ -408,11 +432,11 @@ class OrkestraServer:
         except ValueError as e:
             raise ApiError(400, str(e)) from e
 
-    def approve(self, istek_id, karar) -> None:
+    def approve(self, istek_id, karar, plan=None) -> None:
         h = self._require_active()
         if not isinstance(istek_id, str) or not isinstance(karar, str) or h.approver is None:
             raise ApiError(400, "istek_id ve karar metin olmalı.")
-        h.approver.resolve(istek_id, karar)
+        h.approver.resolve(istek_id, karar, plan)
 
     def status(self) -> dict:
         # son_id anlık görüntüden ÖNCE okunur: arada gelen bir olay en kötü ihtimalle iki kez gönderilir
@@ -444,6 +468,54 @@ class OrkestraServer:
             "mock": self.mock,
             "max_hedef": MAX_GOAL_CHARS,
         }
+
+    # -------------------------------------------------------------- kontrol noktaları ve fark (sürüm 0.3)
+
+    def _store(self) -> CheckpointStore:
+        ws = self._workspace_for_view()
+        if ws is None:
+            raise ApiError(404, "Çalışma klasörü yok.")
+        store = CheckpointStore(ws, self.cfg.settings.runs_dir)
+        if not store.available:
+            raise ApiError(501, "git kurulu değil; kontrol noktaları kullanılamıyor.")
+        return store
+
+    def checkpoints(self) -> dict:
+        store = self._store()
+        h = self.active or self.last
+        start = h.orch.start_checkpoint if h and h.orch else None
+        return {"kontrol_noktalari": [{"sha": c.sha, "zaman": c.zaman, "etiket": c.etiket} for c in store.list(50)],
+                "baslangic": start}
+
+    def diff(self, yol) -> dict:
+        rel = normalize_rel_path(yol) if isinstance(yol, str) and len(yol) <= 1000 else None
+        if rel is None or rel.endswith("/"):
+            raise ApiError(400, "Geçersiz dosya yolu.")
+        if is_protected(rel, self.cfg.guard.protected_paths):
+            raise ApiError(403, "Korumalı yollar görüntülenemez.")
+        store = self._store()
+        h = self.active or self.last
+        base = h.orch.start_checkpoint if h and h.orch and h.orch.start_checkpoint else None
+        if base is None:
+            cps = store.list(1)
+            base = cps[0].sha if cps else None
+        if base is None:
+            raise ApiError(404, "Karşılaştırılacak kontrol noktası yok.")
+        try:
+            return {"yol": rel, "taban": base, "fark": redact(store.diff(base, rel))}
+        except CheckpointError as e:
+            raise ApiError(400, str(e)) from e
+
+    def rollback(self, sha) -> dict:
+        with self._lock:
+            if self.active is not None and not self.active.done.is_set():
+                raise ApiError(409, "Çalıştırma sürerken geri alınamaz; önce durdur.")
+            store = self._store()
+            try:
+                before, rows = store.restore(sha if isinstance(sha, str) else "")
+            except CheckpointError as e:
+                raise ApiError(400, str(e)) from e
+        return {"tamam": True, "onceki": before.sha, "degisenler": [{"durum": st, "yol": p} for st, p in rows[:500]]}
 
     # -------------------------------------------------------------- geçmiş ve dosyalar
 
@@ -647,6 +719,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(200, app.status())
         elif path == "/api/dosya":
             self._json(200, app.read_file((query.get("yol") or [None])[0]))
+        elif path == "/api/fark":
+            self._json(200, app.diff((query.get("yol") or [None])[0]))
+        elif path == "/api/kontrol":
+            self._json(200, app.checkpoints())
         elif path == "/api/gecmis":
             self._json(200, {"calistirmalar": app.history()})
         elif path.startswith("/api/gecmis/"):
@@ -686,7 +762,7 @@ class _Handler(BaseHTTPRequestHandler):
             info = app.start_run(data.get("hedef"), data.get("workspace"), data.get("mod"))
             self._json(200, {"tamam": True, "calistirma": info})
         elif path == "/api/onay":
-            app.approve(data.get("istek_id"), data.get("karar"))
+            app.approve(data.get("istek_id"), data.get("karar"), data.get("plan"))
             self._json(200, {"tamam": True})
         elif path == "/api/not":
             app.add_note(data.get("metin"), data.get("hedef"))
@@ -694,6 +770,8 @@ class _Handler(BaseHTTPRequestHandler):
         elif path in ("/api/duraklat", "/api/devam", "/api/durdur"):
             app.control(path.rsplit("/", 1)[1])
             self._json(200, {"tamam": True})
+        elif path == "/api/geri-al":
+            self._json(200, app.rollback(data.get("sha")))
         elif path == "/api/devam-et-run":
             info = app.resume_run(data.get("run"))
             self._json(200, {"tamam": True, "calistirma": info})

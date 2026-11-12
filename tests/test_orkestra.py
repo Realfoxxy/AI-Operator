@@ -339,10 +339,10 @@ class CliAgentTests(unittest.TestCase):
 class _FailingMock(MockAgent):
     """Belirli bir ajanın işçi çağrısında hata veren sahte ajan."""
 
-    async def run(self, prompt, *, write, workdir, tag, on_chunk=None):
+    async def run(self, prompt, *, write, workdir, tag, on_chunk=None, **kw):
         if prompt.startswith("<<ROL:ISCI>>") and self.name == "gemini":
             raise AgentError("gemini: kota doldu")
-        return await super().run(prompt, write=write, workdir=workdir, tag=tag, on_chunk=on_chunk)
+        return await super().run(prompt, write=write, workdir=workdir, tag=tag, on_chunk=on_chunk, **kw)
 
 
 class _BadPlanMock(MockAgent):
@@ -350,12 +350,12 @@ class _BadPlanMock(MockAgent):
 
     plan_calls = 0
 
-    async def run(self, prompt, *, write, workdir, tag, on_chunk=None):
+    async def run(self, prompt, *, write, workdir, tag, on_chunk=None, **kw):
         if prompt.startswith("<<ROL:PLANLAYICI>>"):
             type(self).plan_calls += 1
             if type(self).plan_calls == 1:
                 return "üzgünüm, plan yok"
-        return await super().run(prompt, write=write, workdir=workdir, tag=tag, on_chunk=on_chunk)
+        return await super().run(prompt, write=write, workdir=workdir, tag=tag, on_chunk=on_chunk, **kw)
 
 
 class EngineTests(unittest.TestCase):
@@ -414,7 +414,7 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(set(results), {"t1", "t2", "t3"})
 
     def test_failure_skips_dependents(self):
-        orch, _ = self._orch(cls=_FailingMock)
+        orch, _ = self._orch(cls=_FailingMock, fallback=False)
         plan, results, _ = asyncio.run(self._flow(orch))
         self.assertEqual(results["t1"].status, "hata")      # gemini
         self.assertEqual(results["t2"].status, "tamam")     # bağımsız görev devam eder

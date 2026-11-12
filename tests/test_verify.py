@@ -76,10 +76,10 @@ class EnvFilterTests(unittest.TestCase):
 class _VerifyPlanMock(MockAgent):
     """Planlayıcı tek görevli ve doğrulamalı bir plan döndürür."""
 
-    async def run(self, prompt, *, write, workdir, tag, on_chunk=None):
+    async def run(self, prompt, *, write, workdir, tag, on_chunk=None, **kw):
         if prompt.startswith("<<ROL:PLANLAYICI>>"):
             return _plan(["kirik"])
-        return await super().run(prompt, write=write, workdir=workdir, tag=tag, on_chunk=on_chunk)
+        return await super().run(prompt, write=write, workdir=workdir, tag=tag, on_chunk=on_chunk, **kw)
 
 
 class EngineVerifyTests(unittest.TestCase):

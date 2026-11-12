@@ -14,6 +14,9 @@ max_revisions = 1
 max_consult_rounds = 2
 max_calls = 60
 dep_output_chars = 12000
+fallback = true                     # kota dolarsa veya ajan hata verirse görevi başka ajana devret
+strict_guard = false                # true: yazma/doğrulama sürerken okuma çağrıları da bekler (kesin atıf)
+checkpoints = true                  # git kuruluysa her aşamada kontrol noktası (geri alınabilir)
 
 [agents.claude]
 display = "Claude (Claude Code, Claude Pro)"
@@ -27,6 +30,8 @@ json_field = "result"
 read_only_args = ["--allowedTools", "Read,Glob,Grep"]
 write_args = ["--allowedTools", "Read,Glob,Grep,Edit,Write"]
 strengths = "planlama, mimari tasarım, karmaşık akıl yürütme, kapsamlı kod yazma ve kod inceleme, güvenlik analizi"
+resume_args = ["--resume", "{session}"]   # revizyonlarda aynı oturum sürer (ajan önceki işini hatırlar)
+session_field = "session_id"
 timeout_s = 900
 max_parallel = 1
 
@@ -65,6 +70,8 @@ max_snapshot_files = 20000
 
 [verify]
 max_verify_runs = 30
+sandbox = "none"                    # "docker": doğrulama komutları ağsız bir Docker kapsayıcısında çalışır
+docker_image = "python:3.12-slim"
 env_passthrough = ["PATH", "PATHEXT", "SYSTEMROOT", "COMSPEC", "TEMP", "TMP", "HOME",
                    "USERPROFILE", "APPDATA", "LOCALAPPDATA", "LANG", "PYTHONIOENCODING"]
 

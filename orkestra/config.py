@@ -38,6 +38,9 @@ class AgentConfig:
     stream_format: str = "none"
     stream_command: list[str] = field(default_factory=list)
     color: str = ""
+    # Sürüm 0.3: oturum sürekliliği ve kullanım bilgisi (yalnızca JSON çıktılı CLI'lar)
+    resume_args: list[str] = field(default_factory=list)   # en az birinde {session} olmalı
+    session_field: str = ""                                 # JSON çıktısındaki oturum kimliği alanı
 
 
 @dataclass
@@ -54,6 +57,10 @@ class Settings:
     mode: str = "tek"
     max_phases: int = 6
     dep_output_chars: int = 12000
+    # Sürüm 0.3
+    fallback: bool = True          # kota/hata durumunda görevi başka ajana devret
+    strict_guard: bool = False     # sıkı mod: yazma ve doğrulama sürerken okuma çağrıları da bekler
+    checkpoints: bool = True       # git ile kontrol noktaları (git kuruluysa)
 
 
 DEFAULT_PROTECTED = [".git", ".github", ".claude", ".gemini", ".copilot", ".vscode", ".idea",
@@ -80,6 +87,8 @@ class VerifyConfig:
     max_verify_runs: int = 30
     env_passthrough: list[str] = field(default_factory=lambda: list(DEFAULT_ENV_PASSTHROUGH))
     commands: list[VerifyCommand] = field(default_factory=list)
+    sandbox: str = "none"          # "none" | "docker"
+    docker_image: str = "python:3.12-slim"
 
     def get(self, name: str) -> VerifyCommand | None:
         return next((c for c in self.commands if c.name == name), None)
@@ -189,6 +198,9 @@ def _parse_settings(raw: dict, base: Path) -> Settings:
         s.max_phases = _int(raw["max_phases"], w("max_phases"), minimum=1)
     if "dep_output_chars" in raw:
         s.dep_output_chars = _int(raw["dep_output_chars"], w("dep_output_chars"), minimum=1000)
+    for key in ("fallback", "strict_guard", "checkpoints"):
+        if key in raw:
+            setattr(s, key, _bool(raw[key], w(key)))
     # '~' ev dizinine açılır; göreli yollar config dosyasının klasörüne göre çözülür.
     s.workspace, s.runs_dir = s.workspace.expanduser(), s.runs_dir.expanduser()
     if not s.workspace.is_absolute():
@@ -246,6 +258,10 @@ def _parse_agent(name: str, raw: dict) -> AgentConfig:
         a.stream_command = _str_list(raw["stream_command"], w("stream_command"))
     if "color" in raw:
         a.color = _str(raw["color"], w("color"))
+    if "resume_args" in raw:
+        a.resume_args = _str_list(raw["resume_args"], w("resume_args"))
+    if "session_field" in raw:
+        a.session_field = _str(raw["session_field"], w("session_field"))
 
     # Alanlar arası kurallar
     if a.prompt_via == "file" and not any("{path}" in x for x in a.file_args):
@@ -254,6 +270,10 @@ def _parse_agent(name: str, raw: dict) -> AgentConfig:
         raise ConfigError(f"{w('json_field')}: output=\"json\" ise zorunludur.")
     if a.stream_format.endswith("-stream-json") and not a.stream_command:
         raise ConfigError(f"{w('stream_command')}: stream_format=\"{a.stream_format}\" ise zorunludur.")
+    if a.resume_args and not any("{session}" in x for x in a.resume_args):
+        raise ConfigError(f"{w('resume_args')}: en az bir argümanda {{session}} olmalı.")
+    if a.resume_args and not a.session_field:
+        raise ConfigError(f"{w('session_field')}: resume_args kullanılıyorsa zorunludur.")
     if a.color and not _COLOR_RE.match(a.color):
         raise ConfigError(f"{w('color')}: #rrggbb biçiminde olmalı.")
     return a
@@ -309,8 +329,16 @@ def _parse_guard(raw) -> GuardConfig:
 def _parse_verify(raw) -> VerifyConfig:
     if not isinstance(raw, dict):
         raise ConfigError("[verify] bir tablo olmalı.")
-    _check_unknown(raw, {"max_verify_runs", "env_passthrough", "commands"}, "verify")
+    _check_unknown(raw, {"max_verify_runs", "env_passthrough", "commands", "sandbox", "docker_image"}, "verify")
     v = VerifyConfig()
+    if "sandbox" in raw:
+        v.sandbox = _choice(raw["sandbox"], _where("verify", "sandbox"), ("none", "docker"))
+    if "docker_image" in raw:
+        img = _str(raw["docker_image"], _where("verify", "docker_image"), allow_empty=False)
+        # İmaj adı argv'ye girer: yalnızca güvenli karakterler (ör. python:3.12-slim, ghcr.io/x/y@sha256:...)
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/:@-]{0,199}", img):
+            raise ConfigError("[verify] docker_image: geçersiz imaj adı.")
+        v.docker_image = img
     if "max_verify_runs" in raw:
         v.max_verify_runs = _int(raw["max_verify_runs"], _where("verify", "max_verify_runs"), minimum=0)
     if "env_passthrough" in raw:

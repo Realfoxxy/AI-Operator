@@ -6,6 +6,33 @@
 
 <sub>Ekran görüntüleri `python -m orkestra ui --mock` ile sahte ajanlarla alınmıştır.</sub>
 
+## Proje geliştirme terminali
+
+```
+$ orkestra
+  ◆ Orkestra 0.3.0 — çok-ajanlı proje geliştirme terminali
+  Hesaplar
+    claude   planlayıcı  ✔ bağlı
+    gemini   ekip        ✔ bağlı
+    copilot  ekip        ✔ bağlı
+
+orkestra[not-uygulamasi]> Python ve SQLite ile bir not uygulaması yaz, testlerini de yaz.
+━━ Aşama 1 planlanıyor…
+Plan — İskelet: Klasör yapısı, veri katmanı ve testler
+    t1  claude   Mimari ve iskelet  ✎ src/, docs/mimari.md
+    t2  copilot  Veri katmanı testleri  ✎ tests/  🧪 pytest
+    t3  gemini   Kullanım belgesi  ✎ README.md
+onay (e onayla · d düzenle · h reddet)> e
+▶ t1 Mimari ve iskelet — claude
+💬 copilot → claude: Veritabanı dosyası nerede tutulmalı?
+🧪 t2 pytest ✓  (1.4 sn, çıkış 0)
+✓ t1 ONAY
+⛳ Kontrol noktası: aşama 1 bitti: İskelet
+…
+```
+
+Herkes **kendi** Claude Pro, Google AI Pro ve GitHub Copilot hesabını bağlar (`/baglan`). Orkestra hiçbir şifre saklamaz; giriş her aracın resmi ekranıyla yapılır. Ayrıntılı anlatım: **[KULLANIM.md](KULLANIM.md)**.
+
 ## Neler yapar?
 
 - **Planlama ve dağıtım:** Claude hedefi en fazla 8 göreve böler, her görevi en uygun ajana atar; bağımsız görevler paralel çalışır.
@@ -15,6 +42,11 @@
 - **Doğrulama:** Testleri ajanlar değil Orkestra çalıştırır; yalnızca senin config'te tanımladığın komutlar.
 - **Kaldığı yerden devam:** Kota biterse veya bilgisayar kapanırsa `devam` ile sürdürülür.
 - **Görsel çalışma alanı:** Ajan masaları, canlı yazma akışı, danışma okları, ekip sohbeti, görev panosu, plan grafiği, dosya ve doğrulama panelleri, onay pencereleri.
+- **Güvenlik ağı (0.3):** Her aşamada kontrol noktası; `/fark` ve `/geri-al` ile geri dönüş. Bu işlem kullanıcının kendi `.git` deposuna dokunmaz.
+- **Devretme (0.3):** Bir ajanın kotası dolarsa görev otomatik olarak başka ajana geçer.
+- **Plan düzenleme (0.3):** Onaylamadan önce görevi başka ajana ata, talimatı değiştir.
+- **Sıkı mod ve Docker yalıtımı (0.3):** Kesin değişiklik takibi; testler ağsız kapsayıcıda.
+- **Kullanım göstergesi, oturum sürekliliği, bildirimler ve İngilizce arayüz (0.3).**
 
 ## Hızlı kurulum
 
@@ -74,10 +106,22 @@ Kullanmak istemediğin ajanı `config.toml` içinde `enabled = false` ile kapata
 
 ## Kullanım
 
+Proje geliştirme terminali (önerilen başlangıç):
+
+```bash
+python -m orkestra
+```
+
 Abonelik harcamadan dene (sahte ajanlar):
 
 ```bash
-python -m orkestra ui --mock
+python -m orkestra --mock
+```
+
+Hesapları terminal açmadan bağla:
+
+```bash
+python -m orkestra hesap
 ```
 
 Görsel çalışma alanı (tarayıcıda açılır, yalnızca `127.0.0.1`):

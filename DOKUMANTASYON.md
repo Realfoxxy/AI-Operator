@@ -1309,3 +1309,53 @@ Bu bölüm, şartnamenin açık bıraktığı veya uygulamada netleştirilmesi g
 | Sürdürmede `baslangic` | Web arayüzünden sürdürmede `baslangic` olayı `devam: true` ile yeniden yayınlanır; açık arayüzler görünümlerini sıfırlar. |
 | Config arama sırası | `--config` → `ORKESTRA_CONFIG` → paketin bir üstündeki `config.toml` → kullanıcı config klasörü (pip/pipx kurulumunda ilk çalıştırmada `orkestra/varsayilan_config.toml` kopyalanır, çalışma klasörü `~/orkestra-calisma`). |
 | Sunucu sınırları | En fazla 16 eşzamanlı SSE bağlantısı; soket zaman aşımı 60 sn; istek satırları loglanmaz (token içerebilir). |
+
+---
+
+## 17. Sürüm 0.3: Proje Geliştirme Terminali ve Ek Özellikler
+
+Ayrıntılı kullanıcı anlatımı için [KULLANIM.md](KULLANIM.md).
+
+### 17.1 Terminal (`terminal.py`)
+
+`orkestra` argümansız çalıştırılınca etkileşimli terminal açılır (`orkestra terminal`). Motor ayrı bir iş parçacığında, kendi asyncio döngüsüyle çalışır; kullanıcı bu sırada yazmaya devam eder. Düz metin boştayken yeni hedef, çalışırken ekibe not olur. Onay soruları istem satırına yönlendirilir (`TerminalApprover`): plan için `e`/`d`/`h`, ihlal için `e`/`h`. Komut listesi KULLANIM.md bölüm 8'dedir. Terminal varsayılan olarak aşamalı modda başlar. Projeler `[settings].workspace` altında alt klasörlerdir (`/proje <ad>`); her proje bölüm 8'deki yerleşim kurallarıyla doğrulanır. Model kaynaklı metinler terminale basılmadan önce kontrol karakterlerinden temizlenir.
+
+### 17.2 Hesap bağlama (`accounts.py`)
+
+Kural 14 aynen geçerlidir: Orkestra hiçbir kimlik bilgisi okumaz veya saklamaz. `/kur` eksik CLI'ları yalnızca bilinen paket adlarıyla `npm install -g` ile kurar. `/baglan` CLI'ı kullanıcının terminalinde, proje klasöründe etkileşimli açar; böylece Copilot'un klasör güveni de aynı anda verilir. `/test` küçük bir istemle bağlantıyı dener; yalnızca başarı durumu, tarih ve maskelenmiş mesaj `hesaplar.json` dosyasına yazılır.
+
+### 17.3 Kontrol noktaları (`checkpoints.py`)
+
+Çalıştırma başında ve her aşama sonunda çalışma klasörünün anlık kopyası, klasörün **dışında** (`runs_dir/_kontrol/<klasör özeti>.git`) ayrı bir git deposuna alınır. Kullanıcının `.git` deposuna dokunulmaz. Git; sistem ve kullanıcı config'i kapalı, kancalar boş bir klasöre yönlendirilmiş ve liste argümanlarla çalışır. Commit etiketi model çıktısı içerebileceği için argv'ye değil stdin'e verilir (kural 2). Geri almadan önce o anki hal de kaydedilir. `.orkestra/` kopyalara dahil edilmez. Olay: `kontrol_noktasi {sha, etiket, asama, baslangic}`. `durum.json` alanı: `kontrol_noktalari`.
+
+### 17.4 Devretme
+
+`[settings] fallback = true` iken bir ajan çağrısı `AgentError` ile biterse görev sıradaki kullanılabilir ajana devredilir. Sıra planlayıcıyla başlar, ardından config'teki sırayla devam eder. Kota veya giriş sorunu gibi görünen hatalarda ajan o çalıştırma boyunca "kullanılamaz" işaretlenir. Devredilen ajanın istemi kendi kimliğiyle kurulur. Kullanılamayan ajana danışma yapılmaz. Olay: `devretme {gorev, rol, eski, yeni, neden}`.
+
+### 17.5 Sıkı mod
+
+`[settings] strict_guard = true`: yazma çağrıları ve doğrulamalar bir okuma/yazma kilidinin yazma tarafını, okuma çağrıları okuma tarafını alır. Böylece bölüm 9.4'teki atıf belirsizliği ortadan kalkar. Kilit her zaman ajan semaforundan sonra alınır; bekleyen yazıcı varken yeni okumalar bekler.
+
+### 17.6 Docker yalıtımı
+
+`[verify] sandbox = "docker"`: doğrulama komutu `docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges --pids-limit 512 --memory 2g --cpus 2 -v <ws>:/work -w /work [--user uid:gid] <docker_image> <argv>` ile çalışır. Zaman aşımında kapsayıcı adıyla `docker kill` yapılır. `docker_image` sıkı bir desenle doğrulanır.
+
+### 17.7 Oturum sürekliliği ve kullanım
+
+Ajan config'inde `resume_args` (en az birinde `{session}`) ve `session_field` tanımlıysa, aynı görevin sonraki işçi çağrıları önceki oturumu sürdürür. Oturum kimliği CLI'ın JSON üst verisinden gelir ve argv'ye girmeden önce `^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$` deseniyle doğrulanır. Bu, kural 2'nin bilinçli ve sınırlı istisnasıdır: değer model metni değil CLI meta verisidir. Kullanım (token ve CLI'ın bildirdiği API eşdeğeri maliyet) Claude `usage`/`total_cost_usd` ve Gemini `stats` alanlarından okunur. Olay: `kullanim {ajan, son, toplam}`.
+
+### 17.8 Plan düzenleme
+
+`Approver.request(kind, payload, istek_id, validate=None)`: plan onayında motor, düzenlenen planı `parse_plan` kurallarıyla doğrulayan bir fonksiyon verir. Web'de `POST /api/onay {istek_id, karar:"onay", plan}`; geçersiz plan `400` döner ve istek beklemede kalır. Terminalde `d` yanıtı planı `$VISUAL`/`$EDITOR` ile açar. Kabul edilen plan `plan` olayıyla (`duzenlendi: true`) yeniden yayınlanır.
+
+### 17.9 Yeni API uç noktaları
+
+| Yöntem | Yol | Açıklama |
+|---|---|---|
+| GET | `/api/fark?yol=` | Dosyanın çalıştırma başındaki kontrol noktasına göre birleşik farkı (bölüm 8 kural 25'teki yol kuralları geçerli) |
+| GET | `/api/kontrol` | Kontrol noktaları |
+| POST | `/api/geri-al` | `{"sha"}`: yalnızca aktif çalıştırma yokken |
+
+### 17.10 Arayüz
+
+Plan düzenleyici, Dosyalar sekmesinde İçerik/Fark görünümü ve kontrol noktası listesi, üst çubukta kullanım çipi, tarayıcı bildirimleri (yalnızca kullanıcı izin verirse ve sekme arka plandayken) ve İngilizce arayüz eklendi. Dil çevirisi arayüz metinlerine uygulanır; `.raw` işaretli ajan içeriği çevrilmez.

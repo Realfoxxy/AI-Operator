@@ -51,6 +51,7 @@ class RunState:
     toplam_dogrulama: int = 0
     durum: str = "calisiyor"
     surum: int = STATE_VERSION
+    kontrol: list[dict] = field(default_factory=list)      # sürüm 0.3: kontrol noktaları
 
     def to_dict(self) -> dict:
         return {
@@ -60,6 +61,7 @@ class RunState:
                          for a in self.asamalar],
             "notlar": self.notlar, "toplam_cagri": self.toplam_cagri,
             "toplam_dogrulama": self.toplam_dogrulama, "durum": self.durum,
+            "kontrol_noktalari": self.kontrol,
         }
 
 
@@ -162,11 +164,23 @@ def load_state(run_dir: Path, cfg: Config) -> tuple[RunState, list[Plan]]:
         phases.append(PhaseState(no=i, plan=plan.to_dict(), sonuclar=clean, bitti=bitti))
         plans.append(plan)
 
+    kontrol = []
+    raw_k = raw.get("kontrol_noktalari", [])
+    if not isinstance(raw_k, list):
+        raise StateError("durum.json: 'kontrol_noktalari' bir liste olmalı.")
+    for k in raw_k[-200:]:
+        if not (isinstance(k, dict) and isinstance(k.get("sha"), str) and re.fullmatch(r"[0-9a-f]{40}", k["sha"])
+                and isinstance(k.get("etiket", ""), str)):
+            raise StateError("durum.json: geçersiz kontrol noktası kaydı.")
+        kontrol.append({"sha": k["sha"], "etiket": k.get("etiket", "")[:200], "asama": _nonneg_int(k.get("asama", 0)),
+                        "zaman": _nonneg_int(k.get("zaman", 0))})
+
     st = RunState(hedef=goal, mod=mode, calisma_klasoru=str(ws), asamalar=phases,
                   notlar=[{"metin": n["metin"], "hedef": n.get("hedef")} for n in notes],
                   toplam_cagri=_nonneg_int(_req(raw, "toplam_cagri", int)),
                   toplam_dogrulama=_nonneg_int(raw.get("toplam_dogrulama", 0)),
-                  durum=raw.get("durum") if raw.get("durum") in RUN_STATUSES else "calisiyor")
+                  durum=raw.get("durum") if raw.get("durum") in RUN_STATUSES else "calisiyor",
+                  kontrol=kontrol)
     return st, plans
 
 

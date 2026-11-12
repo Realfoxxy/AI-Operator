@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "orkestra"
-version = "0.2.0"
+version = "0.3.0"
 description = "Claude, Gemini ve GitHub Copilot'u tek bir ekip gibi çalıştıran çok-ajanlı orkestratör (resmi CLI'lar, sıfır bağımlılık)."
 readme = "README.md"
 requires-python = ">=3.11"

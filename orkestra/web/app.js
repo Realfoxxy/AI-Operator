@@ -19,8 +19,8 @@
   // ===================================================================== (0) DOM yardımcıları
 
   const $ = (id) => document.getElementById(id);
-  const ATTRS = new Set(['role', 'type', 'id', 'title', 'tabindex', 'for', 'value', 'name', 'lang',
-    'aria-label', 'aria-current', 'aria-expanded', 'aria-selected', 'aria-controls', 'aria-hidden']);
+  const ATTRS = new Set(['role', 'type', 'id', 'title', 'tabindex', 'for', 'value', 'name', 'lang', 'rows',
+    'aria-label', 'aria-current', 'aria-expanded', 'aria-selected', 'aria-controls', 'aria-hidden', 'aria-pressed']);
 
   function el(tag, opts, ...children) {
     const n = document.createElement(tag);
@@ -166,7 +166,7 @@
       phase: { no: 0, title: '', status: '' }, budget: null,
       agentState: {}, tasks: {}, taskOrder: [], plans: {}, plansVersion: 0,
       chat: [], chatSeq: 0, files: {}, verifs: [], report: '',
-      consults: [], pending: null, violations: [], endedAt: 0,
+      consults: [], pending: null, violations: [], endedAt: 0, usage: {}, checkpoints: [], startCheckpoint: null,
     };
   }
 
@@ -345,6 +345,16 @@
       case 'sentez':
         s = Object.assign({}, s, { report: ev.metin || '' });
         return withChat(s, { kind: 'ok', who: plannerName(s), agent: plannerName(s), text: 'Sentez raporu hazır (Rapor sekmesi).' });
+      case 'devretme': {
+        if (ev.rol === 'işçi') s = patchTask(s, taskKey(s, ev.gorev), { assignee: ev.yeni });
+        return withChat(s, { kind: 'warn', who: '⇄ Devretme', text: `[${ev.gorev}] ${ev.eski} → ${ev.yeni}: ${ev.neden}`, long: true });
+      }
+      case 'kontrol_noktasi':
+        s = Object.assign({}, s, { checkpoints: s.checkpoints.concat([{ sha: ev.sha, etiket: ev.etiket, asama: ev.asama }]),
+          startCheckpoint: ev.baslangic ? ev.sha : s.startCheckpoint });
+        return withChat(s, { kind: 'info', who: '⛳ Kontrol noktası', text: ev.etiket });
+      case 'kullanim':
+        return Object.assign({}, s, { usage: ev.toplam || {} });
       case 'butce':
         return Object.assign({}, s, { budget: { used: ev.kullanilan, limit: ev.sinir, vused: ev.dogrulama_kullanilan, vlimit: ev.dogrulama_sinir } });
       case 'hata':
@@ -461,6 +471,15 @@
       $('budget').classList.toggle('high', ratio >= 0.85);
       $('budget-text').textContent = `${b.used}/${b.limit}` + (b.vlimit ? ` · doğrulama ${b.vused}/${b.vlimit}` : '');
     }
+    const usage = Object.entries(s.usage || {});
+    $('usage').hidden = !onRun || !usage.length;
+    if (usage.length) {
+      const tok = usage.reduce((n, [, u]) => n + (u.girdi || 0) + (u.cikti || 0), 0);
+      const cost = usage.reduce((n, [, u]) => n + (u.maliyet_usd || 0), 0);
+      $('usage').textContent = `Σ ${tok.toLocaleString('tr-TR')} token` + (cost ? ` · ≈$${cost.toFixed(2)}` : '');
+      $('usage').title = usage.map(([a, u]) => `${a}: ${u.cagri} çağrı, ${(u.girdi || 0) + (u.cikti || 0)} token` +
+        (u.maliyet_usd ? `, ≈$${u.maliyet_usd.toFixed(2)}` : '')).join('\n') + '\n(Maliyet, CLI\'ın bildirdiği API eşdeğeri tahminidir.)';
+    }
     $('elapsed').hidden = !onRun || !info.baslangic;
     const rs = $('run-state');
     rs.hidden = !onRun;
@@ -533,7 +552,7 @@
       st !== 'bosta' && a.since ? el('span', { class: 'desk-timer', 'data-since': a.since, text: fmtDuration(Date.now() - a.since) }) : null);
     if (st === 'hata' && a.detail) statusRow.appendChild(el('span', { class: 'sr-only', text: a.detail }));
     const liveText = st === 'yaziyor' || st === 'dosya_yaziyor' || (st !== 'bosta' && a.live) ? (a.live || '') : '';
-    const liveBox = el('pre', { class: 'desk-live', 'aria-label': `${ag.ad} canlı çıktı` });
+    const liveBox = el('pre', { class: 'desk-live raw', 'aria-label': `${ag.ad} canlı çıktı` });
     if (liveText) { liveBox.appendChild(document.createTextNode(liveText)); if (st === 'yaziyor' || st === 'dosya_yaziyor') liveBox.appendChild(el('span', { class: 'cursor', 'aria-hidden': 'true' })); }
     const kids = [
       el('div', { class: 'desk-head' },
@@ -641,7 +660,9 @@
       }
     });
     if (ev.tur === 'gorev_sonucu') announce(`${ev.gorev} ${ev.durum}`);
-    if (ev.tur === 'onay_istegi') announce('Onay bekleniyor.');
+    if (ev.tur === 'onay_istegi') { announce('Onay bekleniyor.'); notify('Orkestra: onay bekleniyor', ev.istek_turu === 'ihlal' ? 'Korumalı yol ihlali!' : 'Plan onayın gerekiyor.'); }
+    if (ev.tur === 'durum' && FINISHED.has(ev.durum)) notify('Orkestra', `Çalıştırma: ${ev.durum}`);
+    if (ev.tur === 'kontrol_noktasi' && !$('panel-files').hidden) loadCheckpoints();
     if (ev.tur === 'durum' && FINISHED.has(ev.durum)) announce(`Çalıştırma ${ev.durum}.`);
     if (before.status !== state.status && ev.tur === 'durum' && ev.durum === 'duraklatildi') announce('Duraklatıldı.');
   }
@@ -665,7 +686,7 @@
 
   function chatItem(m) {
     const kindClass = { ok: 'k-ok', warn: 'k-warn', bad: 'k-bad', note: 'k-note' }[m.kind] || '';
-    const body = el('div', { class: 'msg-body', text: m.text || '' });
+    const body = el('div', { class: m.long ? 'msg-body raw' : 'msg-body', text: m.text || '' });
     const li = el('li', { class: `msg ${kindClass}`, agent: m.agent ? agentColor(m.agent) : null },
       el('div', { class: 'msg-head' }, el('span', { class: 'msg-who', text: m.who || '' })), body);
     if (m.long && (m.text || '').length > 220) {
@@ -820,11 +841,27 @@
 
   async function viewFile(f) {
     ui.selectedFile = f.path;
+    ui.selectedFileObj = f;
     ui.filesKey = '';
     scheduleRender();
     const head = $('viewer-head'), body = $('viewer-body');
     head.textContent = f.path;
     clear(body);
+    if (ui.viewMode === 'fark') {
+      try {
+        const data = await api('GET', `/api/fark?yol=${encodeURIComponent(f.path)}`);
+        head.textContent = `${data.yol} · çalıştırma başına göre fark`;
+        const frag = document.createDocumentFragment();
+        data.fark.split('\n').forEach((line) => {
+          const cls = line.startsWith('+') && !line.startsWith('+++') ? 'ln add' : (line.startsWith('-') && !line.startsWith('---') ? 'ln del' : (line.startsWith('@@') ? 'ln hunk' : 'ln'));
+          frag.appendChild(el('span', { class: cls, text: line }));
+        });
+        body.appendChild(frag);
+      } catch (e) {
+        body.appendChild(el('span', { class: 'ln', text: e.message }));
+      }
+      return;
+    }
     if (f.kind === 'silindi') { body.appendChild(el('span', { class: 'ln', text: '(dosya silindi)' })); return; }
     try {
       const data = await api('GET', `/api/dosya?yol=${encodeURIComponent(f.path)}`);
@@ -836,6 +873,74 @@
     } catch (e) {
       body.appendChild(el('span', { class: 'ln', text: e.message }));
     }
+  }
+
+  function setViewMode(mode) {
+    ui.viewMode = mode;
+    $('view-content').setAttribute('aria-pressed', String(mode !== 'fark'));
+    $('view-diff').setAttribute('aria-pressed', String(mode === 'fark'));
+    if (ui.selectedFileObj) viewFile(ui.selectedFileObj);
+  }
+
+  async function loadCheckpoints() {
+    const list = $('cp-list');
+    clear(list);
+    let data;
+    try { data = await api('GET', '/api/kontrol'); } catch (e) { list.appendChild(el('li', { class: 'muted', text: e.message })); return; }
+    const cps = data.kontrol_noktalari || [];
+    if (!cps.length) { list.appendChild(el('li', { class: 'muted', text: 'Henüz kontrol noktası yok.' })); return; }
+    for (const cp of cps.slice(0, 20)) {
+      const btn = el('button', { type: 'button', class: 'btn btn-small', text: 'Geri al' });
+      btn.disabled = state.running;
+      btn.addEventListener('click', () => confirmRollback(cp));
+      list.appendChild(el('li', null,
+        el('span', { class: 'mono muted', text: `${new Date(cp.zaman * 1000).toLocaleString('tr-TR')} · ${cp.sha.slice(0, 8)}` }),
+        el('span', { class: 'cp-label', text: cp.etiket }), btn));
+    }
+  }
+
+  function confirmRollback(cp) {
+    openModal({
+      key: 'geri-al', danger: true, title: 'Kontrol noktasına dön',
+      body: [el('p', { text: `Proje klasörü "${cp.etiket}" haline döndürülecek. Sonradan eklenen dosyalar silinir, değişenler eski haline döner.` }),
+        el('p', { class: 'muted', text: 'Şu anki hal önce yeni bir kontrol noktası olarak kaydedilir; bu işlemi de geri alabilirsin.' })],
+      actions: [
+        { label: 'Vazgeç', onClick: closeModal },
+        { label: 'Geri al', cls: 'btn-danger', onClick: async () => {
+          closeModal();
+          try {
+            const res = await api('POST', '/api/geri-al', { sha: cp.sha });
+            dispatch({ tur: '_yerel', kind: 'ok', metin: `Geri alındı: ${res.degisenler.length} dosya değişti.` }, false);
+            ui.filesKey = '';
+            loadCheckpoints();
+          } catch (e) { dispatch({ tur: '_yerel', metin: `Geri alınamadı: ${e.message}` }, false); }
+        } },
+      ],
+    });
+  }
+
+  // ---------------------------------------------------------------- bildirimler (yalnızca kullanıcı izin verirse)
+
+  function notify(title, body) {
+    try {
+      if (!('Notification' in window) || Notification.permission !== 'granted' || !document.hidden) return;
+      const n = new Notification(title, { body, tag: 'orkestra' });
+      n.onclick = () => { window.focus(); n.close(); };
+    } catch (e) { /* bildirim desteklenmiyor */ }
+  }
+
+  function initNotifications() {
+    const btn = $('notify-btn');
+    if (!('Notification' in window)) { btn.hidden = true; return; }
+    const sync = () => {
+      btn.setAttribute('aria-pressed', String(Notification.permission === 'granted'));
+      btn.title = Notification.permission === 'granted' ? 'Bildirimler açık (onay beklerken haber verilir)' : 'Onay beklerken bildirim al';
+    };
+    sync();
+    btn.addEventListener('click', async () => {
+      try { await Notification.requestPermission(); } catch (e) { /* yok sayılır */ }
+      sync();
+    });
   }
 
   // ---------------------------------------------------------------- doğrulama
@@ -850,7 +955,7 @@
       list.appendChild(el('li', null,
         el('div', null, el('strong', { text: `${v.ok ? '✓' : '✗'} ${v.cmd}` }),
           el('span', { class: 'muted', text: ` · ${v.task} · ${v.dur} sn · çıkış kodu ${v.code === null ? 'yok (zaman aşımı)' : v.code}` })),
-        el('pre', { text: v.out || '(çıktı yok)' })));
+        el('pre', { class: 'raw', text: v.out || '(çıktı yok)' })));
     }
   }
 
@@ -938,13 +1043,61 @@
     if (p && ui.modal === null && ui.dismissedApproval !== p.istek_id) openApproval(p);
   }
 
-  async function decide(istekId, karar) {
+  // Plan düzenleyici: ajan ataması, başlık, talimat, yazma izni ve dosya listesi değiştirilebilir.
+  // Sunucu düzenlenen planı motorun kurallarıyla yeniden doğrular; geçersizse hata burada gösterilir.
+  function openPlanEditor(p, plan) {
+    const draft = JSON.parse(JSON.stringify(plan));
+    const err = el('div', { class: 'danger-box', role: 'alert' });
+    err.hidden = true;
+    const rows = draft.tasks.map((t) => {
+      const sel = el('select', { 'aria-label': `${t.id} ajan` }, state.agents.map((a) => el('option', { value: a.ad, text: a.ad })));
+      sel.value = t.assignee;
+      sel.addEventListener('change', () => { t.assignee = sel.value; });
+      const title = el('input', { type: 'text', value: t.title, 'aria-label': `${t.id} başlık` });
+      title.addEventListener('input', () => { t.title = title.value; });
+      const instr = el('textarea', { rows: 3, 'aria-label': `${t.id} talimat` });
+      instr.value = t.instructions;
+      instr.addEventListener('input', () => { t.instructions = instr.value; });
+      const write = el('input', { type: 'checkbox', 'aria-label': `${t.id} yazma izni` });
+      write.checked = !!t.needs_write;
+      const files = el('input', { type: 'text', value: (t.files || []).join(', '), 'aria-label': `${t.id} dosyalar`, class: 'mono' });
+      const syncFiles = () => { t.files = write.checked ? files.value.split(',').map((x) => x.trim()).filter(Boolean) : []; t.needs_write = write.checked; files.disabled = !write.checked; };
+      write.addEventListener('change', syncFiles);
+      files.addEventListener('input', syncFiles);
+      syncFiles();
+      return el('tr', null, el('td', { class: 'mono', text: t.id }), el('td', null, sel), el('td', null, title, instr),
+        el('td', null, el('label', null, write, ' ✎')), el('td', null, files));
+    });
+    openModal({
+      key: `onay:${p.istek_id}`, title: 'Planı düzenle',
+      body: [
+        el('p', { class: 'muted', text: 'Görevleri başka ajana atayabilir, talimatları ve dosya listesini değiştirebilirsin. Kaydedilen plan aynı güvenlik kurallarıyla yeniden doğrulanır.' }),
+        el('div', { class: 'table-wrap plan-edit' }, el('table', null,
+          el('thead', null, el('tr', null, ...['Id', 'Ajan', 'Başlık ve talimat', 'Yazma', 'Dosyalar (virgülle)'].map((h) => el('th', { text: h })))),
+          el('tbody', null, rows))),
+        err,
+      ],
+      actions: [
+        { label: 'Vazgeç', onClick: () => { ui.editingPlan = null; ui.modal = null; openApproval(p); } },
+        { label: 'Kaydet ve onayla', cls: 'btn-primary', onClick: async () => {
+          const res = await decide(p.istek_id, 'onay', draft);
+          if (res !== true) { err.hidden = false; err.textContent = res; }
+        } },
+      ],
+    });
+  }
+
+  async function decide(istekId, karar, plan) {
     try {
-      await api('POST', '/api/onay', { istek_id: istekId, karar });
+      await api('POST', '/api/onay', plan ? { istek_id: istekId, karar, plan } : { istek_id: istekId, karar });
+      ui.editingPlan = null;
       ui.dismissedApproval = istekId;     // onay_cevabi olayı gelene kadar modal yeniden açılmaz
       closeModal();
+      return true;
     } catch (e) {
+      if (plan) return e.message;
       dispatch({ tur: '_yerel', metin: `Karar gönderilemedi: ${e.message}` }, false);
+      return e.message;
     }
   }
 
@@ -953,6 +1106,7 @@
     const key = `onay:${p.istek_id}`;
     if (p.tur === 'plan') {
       const plan = v.plan || { tasks: [] };
+      if (ui.editingPlan === p.istek_id) { openPlanEditor(p, plan); return; }
       const rows = (plan.tasks || []).map((t) => el('tr', null,
         el('td', { class: 'mono', text: t.id }), el('td', { text: t.title }), el('td', { text: t.assignee }),
         el('td', { text: (t.depends_on || []).join(', ') || '-' }), el('td', { text: t.needs_write ? 'EVET ✎' : 'hayır' }),
@@ -974,6 +1128,7 @@
         ],
         actions: [
           { label: 'Reddet', onClick: () => decide(p.istek_id, 'ret') },
+          { label: 'Düzenle', onClick: () => { ui.editingPlan = p.istek_id; ui.modal = null; openApproval(p); } },
           { label: 'Onayla', cls: 'btn-primary', onClick: () => decide(p.istek_id, 'onay') },
         ],
       });
@@ -1020,7 +1175,7 @@
         t.warnings.length ? el('div', { class: 'warn-box', text: t.warnings.join('\n') }) : null,
         t.reviews.length ? section('Denetim geçmişi', el('ul', null, t.reviews.map((r) =>
           el('li', { text: `${r.auto ? 'otomatik ' : ''}${r.verdict === 'approve' ? 'ONAY ✓' : 'REVİZYON ↺'}${r.feedback ? ' — ' + r.feedback : ''}` })))) : null,
-        t.output ? section('Son çıktı', el('div', { class: 'markdown' }, renderMarkdown(t.output))) : null,
+        t.output ? section('Son çıktı', el('div', { class: 'markdown raw' }, renderMarkdown(t.output))) : null,
       ],
       actions: [{ label: 'Kapat', cls: 'btn-primary', onClick: closeModal }],
     });
@@ -1038,6 +1193,146 @@
         } },
       ],
     });
+  }
+
+  // ===================================================================== (4b) Arayüz dili (Türkçe / English)
+  //
+  // Arayüz metinleri bir MutationObserver ile çevrilir; çağrı noktaları değişmez. Ajanların yazdığı
+  // içerik (.raw: rapor, canlı çıktı, dosya içeriği, uzun sohbet iletileri) hiçbir zaman çevrilmez.
+
+  const LANG_KEY = 'orkestra-dil';
+  const EN = {
+    'İçeriğe atla': 'Skip to content', 'Hedef:': 'Goal:', 'Bütçe': 'Budget', 'Bağlanıyor…': 'Connecting…',
+    'Bekleyen onay': 'Pending approval', 'Duraklat': 'Pause', 'Durdur': 'Stop', 'Devam': 'Resume', 'Yeni hedef': 'New goal',
+    'Ekibe bir hedef ver': 'Give the team a goal',
+    'Claude planlar ve denetler, görevler ekibe dağıtılır, ajanlar birbirine danışır. Her şeyi buradan canlı izleyebilirsin.':
+      'Claude plans and reviews, tasks are distributed to the team and agents consult each other. Watch everything live here.',
+    'Sahte ajan modu: gerçek abonelik harcanmaz.': 'Mock agent mode: no real subscription usage.',
+    'Hedef': 'Goal', 'Çalışma klasörü': 'Working folder', 'Mod': 'Mode', 'Tek plan': 'Single plan',
+    'Ajanlar yalnızca bu klasörde çalışır. Orkestra deposunun dışında olmalıdır.': 'Agents work only inside this folder. It must be outside the Orkestra repository.',
+    'Aşamalı (büyük uygulamalar)': 'Phased (large applications)', 'Başlat': 'Start', 'Geçmiş çalıştırmalar': 'Past runs',
+    'Henüz çalıştırma yok.': 'No runs yet.', 'Ofis': 'Office', 'Ekip sohbeti': 'Team chat', 'Ekibe not': 'Note to the team',
+    'Ekibe not yaz…': 'Write a note to the team…', 'Gönder': 'Send', 'Pano': 'Board', 'Plan grafiği': 'Plan graph',
+    'Dosyalar': 'Files', 'Doğrulama': 'Verification', 'Rapor': 'Report', 'Sohbet': 'Chat', 'Aşama': 'Phase',
+    'Görüntülemek için bir dosya seç.': 'Select a file to view.', 'Dosya içeriği': 'File contents',
+    'Markdown olarak indir': 'Download as Markdown', 'İçerik': 'Content', 'Fark': 'Diff', 'Kontrol noktaları': 'Checkpoints',
+    'Temayı değiştir': 'Change theme', 'Paneller': 'Panels', 'Not hedefi': 'Note target', 'Dil / Language': 'Language / Dil',
+    'Örnek: Basit bir yapılacaklar listesi uygulaması için mimari öner ve iskeleti yaz.': 'Example: Propose an architecture for a simple to-do app and write the skeleton.',
+    'Bağlı': 'Connected', 'Bağlantı koptu, yeniden deneniyor…': 'Disconnected, retrying…',
+    'boşta': 'idle', 'sırada': 'queued', 'düşünüyor': 'thinking', 'yazıyor': 'writing', 'dosya yazıyor': 'writing files',
+    'danışıyor': 'consulting', 'denetliyor': 'reviewing', 'hata': 'error',
+    'Baş Planlayıcı': 'Lead Planner', 'Baş Planlayıcı · Denetçi': 'Lead Planner · Reviewer', 'Denetçi': 'Reviewer', 'Ekip üyesi': 'Team member',
+    'Bekliyor': 'Waiting', 'Çalışıyor': 'Running', 'Denetimde / Doğrulamada': 'Review / Verification', 'Tamam': 'Done', 'Hata / Atlandı': 'Failed / Skipped',
+    'Henüz değişen dosya yok.': 'No changed files yet.', 'Henüz doğrulama çalışmadı.': 'No verification has run yet.',
+    'Sentez raporu henüz hazır değil.': 'The final report is not ready yet.', 'Henüz plan yok.': 'No plan yet.', 'Tüm ekip': 'Whole team',
+    'Plan onayı': 'Plan approval', 'Onayla': 'Approve', 'Reddet': 'Reject', 'Düzenle': 'Edit', 'Planı düzenle': 'Edit plan',
+    'Vazgeç': 'Cancel', 'Kaydet ve onayla': 'Save and approve', 'Kapat': 'Close', 'Devam et': 'Continue',
+    'Başlangıç uyarısı': 'Startup warning', '⛔ Korumalı yol ihlali': '⛔ Protected path violation', 'Çalıştırmayı durdur': 'Stop the run',
+    'Raporu gör': 'View report', 'Kaldığı yerden devam': 'Resume', 'Geri al': 'Roll back', 'Kontrol noktasına dön': 'Return to checkpoint',
+    'Henüz kontrol noktası yok.': 'No checkpoints yet.', 'çalışıyor': 'running', '✔ bitti': '✔ done', '⏸ duraklatıldı': '⏸ paused',
+    '⏹ durduruldu': '⏹ stopped', '✖ hata': '✖ error', 'iptal': 'cancelled', 'Talimat': 'Instructions', 'Beklenen çıktı': 'Expected output',
+    'Denetim geçmişi': 'Review history', 'Son çıktı': 'Latest output', 'Çalıştırılacak doğrulama komutları': 'Verification commands to run',
+    '✎ Bu plan çalışma klasöründe dosya YAZAN görevler içeriyor.': '✎ This plan contains tasks that WRITE files in the working folder.',
+    '⚠ Bu komutlar ajanların yazdığı kodu bilgisayarında çalıştırır. Güvenmediğin işlerde Orkestra\'yı sanal makine, WSL veya Windows Sandbox içinde çalıştır.':
+      '⚠ These commands run code written by the agents on your computer. For untrusted work run Orkestra in a VM, WSL or Windows Sandbox.',
+    'Id': 'Id', 'Başlık': 'Title', 'Ajan': 'Agent', 'Bağımlılık': 'Depends on', 'Yazma': 'Write', 'EVET ✎': 'YES ✎', 'hayır': 'no',
+    'Başlık ve talimat': 'Title and instructions', 'Dosyalar (virgülle)': 'Files (comma separated)',
+    'Görevleri başka ajana atayabilir, talimatları ve dosya listesini değiştirebilirsin. Kaydedilen plan aynı güvenlik kurallarıyla yeniden doğrulanır.':
+      'You can reassign tasks, change instructions and file lists. The saved plan is re-validated with the same security rules.',
+    'Plan': 'Plan', 'Rapor yok.': 'No report.', 'Arayüz': 'UI', 'Sen': 'You', 'Onaylandı.': 'Approved.', 'Reddedildi.': 'Rejected.',
+    'Çalıştırma başladı.': 'Run started.', 'Kayıtlı çalıştırma sürdürülüyor.': 'Resuming saved run.', '✔ Çalıştırma tamamlandı.': '✔ Run completed.',
+    '✖ Çalıştırma hata ile bitti.': '✖ Run ended with an error.', '⏸ Duraklatıldı.': '⏸ Paused.', '▶ Devam ediyor.': '▶ Resumed.',
+    '⏹ Durduruldu. Durum kaydedildi.': '⏹ Stopped. State saved.', 'Sentez raporu hazır (Rapor sekmesi).': 'Final report ready (Report tab).',
+    '(dosya silindi)': '(file deleted)', 'Onay beklerken bildirim al': 'Get notified when approval is needed',
+    'Bildirimler açık (onay beklerken haber verilir)': 'Notifications on (you are notified when approval is needed)',
+    'Tamamlanan görev': 'Completed tasks', 'Yapılan danışma': 'Consultations made', 'Alınan danışma': 'Consultations received',
+    'Eşzamanlı çağrı sayısı': 'Concurrent calls', 'Dosya yazar': 'Writes files', 'genişlet': 'expand', 'daralt': 'collapse',
+    'İhlale rağmen devam edildi.': 'Continued despite the violation.', 'İhlal nedeniyle durduruldu.': 'Stopped due to the violation.',
+    '⇄ Devretme': '⇄ Handover', '⛳ Kontrol noktası': '⛳ Checkpoint', 'doğrulama': 'verification', '⛔ İhlal': '⛔ Violation',
+    'ONAY ✓': 'APPROVED ✓', 'REVİZYON ↺': 'REVISION ↺', '⏳ doğrulama': '⏳ verifying', '✓ test': '✓ test', '✗ test': '✗ test',
+    'Ajanları yönlendirebilecek talimat veya konfig dosyaları bulundu. CLI araçları bu dosyaları otomatik okur. İçeriklerini kontrol etmeden devam etme.':
+      'Instruction or config files that can steer the agents were found. The CLI tools read them automatically. Check them before continuing.',
+    'Yeni çağrılar duraklatıldı. Orkestra değişiklikleri otomatik geri almaz; gerekirse git ile geri al.':
+      'New calls are paused. Orkestra does not undo changes automatically; roll back if needed.',
+    'Çalışan görevler iptal edilir ve durum kaydedilir. Daha sonra başlangıç ekranından kaldığı yerden devam edebilirsin.':
+      'Running tasks are cancelled and the state is saved. You can resume later from the start screen.',
+    'Şu anki hal önce yeni bir kontrol noktası olarak kaydedilir; bu işlemi de geri alabilirsin.':
+      'The current state is saved as a new checkpoint first, so this can be undone too.',
+  };
+  const EN_PATTERNS = [
+    [/^Aşamalı · Aşama (\d+)\/(\S+)(.*)$/, 'Phased · Phase $1/$2$3'],
+    [/^Plan onayı — Aşama (\d+)(.*)$/, 'Plan approval — Phase $1$2'],
+    [/^Aşama (\d+)$/, 'Phase $1'],
+    [/^(\d+)\/(\d+) · doğrulama (\d+)\/(\d+)$/, '$1/$2 · verification $3/$4'],
+    [/^Aşama (\d+)(: .*)? — planlanıyor$/, 'Phase $1$2 — planning'],
+    [/^Aşama (\d+)(: .*)? — çalışıyor$/, 'Phase $1$2 — running'],
+    [/^Aşama (\d+)(: .*)? — bitti$/, 'Phase $1$2 — done'],
+    [/^Planı hazırladım \(aşama (\d+)\): (\d+) görev\. ([\s\S]*)$/, 'Plan ready (phase $1): $2 tasks. $3'],
+    [/^Planı hazırladım: (\d+) görev\. ([\s\S]*)$/, 'Plan ready: $1 tasks. $2'],
+    [/^\[(\S+)\] ONAY ✓([\s\S]*)$/, '[$1] APPROVED ✓$2'], [/^\[(\S+)\] REVİZYON ↺([\s\S]*)$/, '[$1] REVISION ↺$2'],
+    [/^\[(\S+)\] doğrulama başarısız → otomatik REVİZYON ↺$/, '[$1] verification failed → automatic REVISION ↺'],
+    [/^Not → tüm ekip$/, 'Note → whole team'], [/^Not → (.+)$/, 'Note → $1'],
+    [/^(.*) · (\d+) bayt · salt-okunur$/, '$1 · $2 bytes · read-only'],
+    [/^(.*) · çalıştırma başına göre fark$/, '$1 · diff since run start'],
+    [/^(\S+) canlı çıktı$/, '$1 live output'],
+    [/^(yeni|değişti|silindi) · (.+)$/, (m, k, r) => `${{ yeni: 'new', 'değişti': 'changed', silindi: 'deleted' }[k]} · ${r.replace('bildirilmemiş', 'unreported')}`],
+    [/^(.+) · (aşamalı|tek plan) · (.+)$/, (m, d, mode, st) => `${d} · ${mode === 'aşamalı' ? 'phased' : 'single plan'} · ${st.replace('bitti', 'done').replace('durduruldu', 'stopped').replace('hata', 'error').replace('yarım kaldı', 'incomplete')}`],
+    [/^(\d+) çağrı/, '$1 calls'],
+  ];
+
+  function tr2en(text) {
+    const k = text.trim();
+    if (!k) return text;
+    if (Object.prototype.hasOwnProperty.call(EN, k)) return text.replace(k, EN[k]);
+    for (const [re, rep] of EN_PATTERNS) {
+      if (re.test(k)) return text.replace(k, typeof rep === 'function' ? k.replace(re, rep) : k.replace(re, rep));
+    }
+    return text;
+  }
+
+  let currentLang = 'tr';
+  function translateTree(root) {
+    if (currentLang !== 'en' || !root) return;
+    const skip = (node) => {
+      const elx = node.nodeType === 1 ? node : node.parentElement;
+      return !elx || !!elx.closest('.raw, script, style, textarea');
+    };
+    if (root.nodeType === 3) { if (!skip(root)) { const t = tr2en(root.nodeValue); if (t !== root.nodeValue) root.nodeValue = t; } return; }
+    if (root.nodeType !== 1 || skip(root)) return;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    for (const n of nodes) { if (!skip(n)) { const t = tr2en(n.nodeValue); if (t !== n.nodeValue) n.nodeValue = t; } }
+    for (const elx of [root, ...root.querySelectorAll('[placeholder], [aria-label], [title]')]) {
+      if (elx.closest('.raw')) continue;
+      for (const a of ['placeholder', 'aria-label', 'title']) {
+        const v = elx.getAttribute && elx.getAttribute(a);
+        if (v) { const t = tr2en(v); if (t !== v) elx.setAttribute(a, t); }
+      }
+    }
+  }
+
+  function initI18n() {
+    let saved = null;
+    try { saved = localStorage.getItem(LANG_KEY); } catch (e) { saved = null; }
+    currentLang = saved === 'en' ? 'en' : 'tr';
+    const btn = $('lang-btn');
+    btn.textContent = currentLang === 'en' ? 'TR' : 'EN';
+    btn.addEventListener('click', () => {
+      try { localStorage.setItem(LANG_KEY, currentLang === 'en' ? 'tr' : 'en'); } catch (e) { /* depolama kapalı olabilir */ }
+      window.location.reload();
+    });
+    if (currentLang !== 'en') return;
+    document.documentElement.lang = 'en';
+    translateTree(document.body);
+    new MutationObserver((muts) => {
+      for (const m of muts) {
+        if (m.type === 'characterData') translateTree(m.target);
+        else if (m.type === 'attributes') translateTree(m.target);
+        else m.addedNodes.forEach((n) => translateTree(n));
+      }
+    }).observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true,
+      attributeFilter: ['placeholder', 'aria-label', 'title'] });
   }
 
   // ===================================================================== (5) Güvenli Markdown dönüştürücü
@@ -1327,6 +1622,11 @@
     window.addEventListener('resize', scheduleRender);
     initTabs();
     initResponsiveChat();
+    initNotifications();
+    initI18n();
+    $('view-content').addEventListener('click', () => setViewMode('icerik'));
+    $('view-diff').addEventListener('click', () => setViewMode('fark'));
+    $('tab-files').addEventListener('click', loadCheckpoints);
 
     // Geçen süre sayaçları gerçek başlangıç zamanlarından hesaplanır; masalar (hata → boşta geçişi) da yenilenir.
     window.setInterval(() => { updateTimers(); if (state.running) scheduleRender(); }, 1000);

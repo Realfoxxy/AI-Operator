@@ -206,10 +206,11 @@ Hatayı düzelt ve yalnızca geçerli JSON döndür."""
 
 def worker(goal: str, task, agents: Iterable, deps: dict, answers: list, previous: str | None,
            feedback: str | None, lang: str, allow_ask: bool = True, *, tree: str = "",
-           memory: str = "", notes=()) -> str:
+           memory: str = "", notes=(), as_agent: str | None = None) -> str:
     agents = list(agents)
-    me = next((a for a in agents if a.name == task.assignee), None)
-    me_desc = f"{task.assignee} ({me.display})" if me else task.assignee
+    agent_name = as_agent or task.assignee        # görev başka ajana devredildiyse onun kimliği
+    me = next((a for a in agents if a.name == agent_name), None)
+    me_desc = f"{agent_name} ({me.display})" if me else agent_name
     parts = [
         ROLE_WORKER,
         f"Sen bir yapay zekâ ekibinin üyesisin. Kimliğin: {me_desc}.",
@@ -240,7 +241,7 @@ def worker(goal: str, task, agents: Iterable, deps: dict, answers: list, previou
     ctx = _context_blocks(tree, memory)
     if ctx:
         parts += [""] + ctx
-    nb = notes_block(notes, task.assignee)
+    nb = notes_block(notes, agent_name)
     if nb:
         parts += ["", nb]
     if deps:
@@ -250,10 +251,10 @@ def worker(goal: str, task, agents: Iterable, deps: dict, answers: list, previou
     if answers:
         parts += ["", "DANIŞMA CEVAPLARI:"]
         for i, a in enumerate(answers, 1):
-            parts.append(data_block(f"soru_{i}", a["soru"], task.assignee))
+            parts.append(data_block(f"soru_{i}", a["soru"], agent_name))
             parts.append(data_block(f"cevap_{i}", a["cevap"], a["hedef"]))
     if previous:
-        parts += ["", "ÖNCEKİ TASLAĞIN:", data_block("onceki_taslak", previous, task.assignee)]
+        parts += ["", "ÖNCEKİ TASLAĞIN:", data_block("onceki_taslak", previous, agent_name)]
     if feedback:
         parts += ["", "DENETÇİ GERİ BİLDİRİMİ (buna göre düzelt):", data_block("denetim", feedback, "denetci")]
 

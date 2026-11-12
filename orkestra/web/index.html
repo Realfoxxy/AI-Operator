@@ -17,7 +17,7 @@
       <span class="brand-name">Orkestra</span>
     </div>
     <button type="button" id="goal-btn" class="goal-line" hidden aria-expanded="false" aria-controls="goal-full">
-      <span class="goal-label">Hedef:</span> <span id="goal-text"></span>
+      <span class="goal-label">Hedef:</span> <span id="goal-text" class="raw"></span>
     </button>
     <div class="topbar-meta">
       <span id="phase-info" class="chip" hidden></span>
@@ -26,6 +26,7 @@
         <span class="budget-track" aria-hidden="true"><span id="budget-fill" class="budget-fill"></span></span>
         <span id="budget-text" class="budget-text"></span>
       </div>
+      <span id="usage" class="chip mono" hidden></span>
       <span id="elapsed" class="chip mono" hidden></span>
       <span id="run-state" class="chip" hidden></span>
       <span id="conn" class="conn" role="status"><span class="conn-dot" aria-hidden="true"></span><span id="conn-text">Bağlanıyor…</span></span>
@@ -35,10 +36,12 @@
       <button type="button" id="pause-btn" class="btn" hidden aria-label="Duraklat">⏸ <span class="btn-text">Duraklat</span></button>
       <button type="button" id="stop-btn" class="btn btn-danger" hidden aria-label="Durdur">⏹ <span class="btn-text">Durdur</span></button>
       <button type="button" id="new-btn" class="btn" hidden>Yeni hedef</button>
+      <button type="button" id="notify-btn" class="btn btn-icon" aria-label="Bildirimler" aria-pressed="false">🔔</button>
+      <button type="button" id="lang-btn" class="btn btn-icon" aria-label="Dil / Language">EN</button>
       <button type="button" id="theme-btn" class="btn btn-icon" aria-label="Temayı değiştir">☾</button>
     </div>
   </header>
-  <div id="goal-full" class="goal-full" hidden></div>
+  <div id="goal-full" class="goal-full raw" hidden></div>
 
   <main id="main" tabindex="-1">
     <!-- ======================= Başlangıç ekranı ======================= -->
@@ -113,10 +116,20 @@
         </div>
         <div role="tabpanel" id="panel-files" aria-labelledby="tab-files" class="panel" hidden>
           <div class="files">
-            <ul id="file-list" class="file-list"></ul>
+            <div>
+              <ul id="file-list" class="file-list"></ul>
+              <section class="checkpoints" aria-labelledby="cp-title">
+                <h3 id="cp-title">Kontrol noktaları</h3>
+                <ul id="cp-list" class="cp-list"></ul>
+              </section>
+            </div>
             <div class="viewer">
+              <div class="viewer-tools" role="group" aria-label="Görünüm">
+                <button type="button" id="view-content" class="btn btn-small" aria-pressed="true">İçerik</button>
+                <button type="button" id="view-diff" class="btn btn-small" aria-pressed="false">Fark</button>
+              </div>
               <div id="viewer-head" class="viewer-head muted">Görüntülemek için bir dosya seç.</div>
-              <pre id="viewer-body" class="viewer-body" tabindex="0" aria-label="Dosya içeriği"></pre>
+              <pre id="viewer-body" class="viewer-body raw" tabindex="0" aria-label="Dosya içeriği"></pre>
             </div>
           </div>
         </div>
@@ -125,7 +138,7 @@
         </div>
         <div role="tabpanel" id="panel-report" aria-labelledby="tab-report" class="panel" hidden>
           <div class="report-tools"><button type="button" id="download-btn" class="btn" disabled>Markdown olarak indir</button></div>
-          <article id="report" class="markdown"></article>
+          <article id="report" class="markdown raw"></article>
         </div>
         <div role="tabpanel" id="panel-chat" aria-labelledby="tab-chat" class="panel" hidden></div>
       </section>

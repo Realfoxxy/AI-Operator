@@ -283,12 +283,58 @@ def cmd_doctor(args) -> int:
     return 0 if ok else 1
 
 
+# ====================================================================== terminal ve hesaplar (sürüm 0.3)
+
+def cmd_terminal(args) -> int:
+    try:
+        cfg = _load_config(args)
+    except ConfigError as e:
+        _err(str(e))
+        return 2
+    if not sys.stdin.isatty():
+        _err("Terminal etkileşimli bir konsol gerektirir. Betiklerden 'run' komutunu kullan.")
+        return 2
+    from .terminal import main_terminal
+    return main_terminal(cfg, mock=args.mock)
+
+
+def cmd_hesap(args) -> int:
+    """Hesap bağlama sihirbazı (terminal açmadan)."""
+    try:
+        cfg = _load_config(args)
+    except ConfigError as e:
+        _err(str(e))
+        return 2
+    from .terminal import TerminalApp
+    app = TerminalApp(cfg)
+    app.cmd_hesaplar([])
+    if not sys.stdin.isatty():
+        return 0
+    from . import accounts
+    if accounts.missing_packages(cfg):
+        app.cmd_kur([])
+    app.cmd_baglan(["hepsi"])
+    app.cmd_hesaplar([])
+    return 0
+
+
 # ====================================================================== argparse
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="python -m orkestra",
                                 description="Claude, Gemini ve Copilot'u tek ekip gibi çalıştıran orkestratör.")
-    sub = p.add_subparsers(dest="komut", required=True, metavar="KOMUT")
+    p.add_argument("--mock", action="store_true", help="terminali sahte ajanlarla aç (abonelik harcamaz)")
+    p.add_argument("--config", help="config dosyası")
+    sub = p.add_subparsers(dest="komut", required=False, metavar="KOMUT")
+
+    t = sub.add_parser("terminal", help="etkileşimli proje geliştirme terminali (varsayılan)")
+    t.add_argument("--mock", action="store_true", help="sahte ajanlarla dene (abonelik harcamaz)")
+    t.add_argument("--config", help="config dosyası")
+    t.set_defaults(func=cmd_terminal)
+
+    h = sub.add_parser("hesap", help="Claude, Gemini ve Copilot hesaplarını bağla")
+    h.add_argument("--config", help="config dosyası")
+    h.set_defaults(func=cmd_hesap)
 
     r = sub.add_parser("run", help="bir hedefi planla ve çalıştır")
     r.add_argument("hedef", nargs="?", help="hedef metni")
@@ -325,7 +371,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     _setup_stdio()
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if not getattr(args, "func", None):
+        if not sys.stdin.isatty():
+            parser.print_help()
+            return 0
+        args.func = cmd_terminal          # argümansız: etkileşimli terminal
     try:
         return args.func(args)
     except KeyboardInterrupt:

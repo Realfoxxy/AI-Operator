@@ -33,6 +33,7 @@ from pathlib import Path
 from . import prompts
 from .agents import Agent, AgentError
 from .approvals import Approver, CliApprover
+from .checkpoints import CheckpointError, CheckpointStore
 from .config import Config
 from .events import EventBus
 from .guard import CallInfo, ChangeTracker, GuardError, MAX_EVENT_PATHS, Report, scan_startup
@@ -46,6 +47,9 @@ from .verify import VerifyResult, run_verify
 ASK_RE = re.compile(r'<<SOR\s+ajan="([a-z0-9_-]{1,40})"\s*>>(.*?)<</SOR>>', re.S)
 MAX_ASKS_PER_TURN = 2
 MAX_QUESTION_CHARS = 2000
+# Kota/erişim sorunu gibi görünen hatalar: ajan bu çalıştırmada "kullanılamaz" işaretlenir (devretme).
+QUOTA_RE = re.compile(r"quota|rate.?limit|usage limit|limit (?:reached|exceeded)|too many requests|\b429\b|"
+                      r"kota|resource.?exhausted|credit balance|programı bulunamadı|not logged in|login", re.I)
 CHUNK_INTERVAL_S = 0.15
 CHUNK_MAX_CHARS = 2000
 MAX_NOTES = 20
@@ -78,6 +82,48 @@ def strip_asks(text: str) -> str:
 
 
 _TASK_STATUS = {"tamam": "tamam", "hata": "hata", "atlandı": "atlandi"}
+
+
+class RWLock:
+    """Sıkı mod için okuma/yazma kilidi: okumalar birlikte, yazma ve doğrulama tek başına çalışır.
+
+    Bekleyen bir yazıcı varken yeni okumalar beklenir (yazıcı açlığı önlenir). Kilit her zaman
+    ajan semaforundan SONRA alınır; bu sıra kilitlenmeyi önler.
+    """
+
+    def __init__(self):
+        self._cond = asyncio.Condition()
+        self._readers = 0
+        self._writer = False
+        self._waiting = 0
+
+    @contextlib.asynccontextmanager
+    async def read(self):
+        async with self._cond:
+            await self._cond.wait_for(lambda: not self._writer and self._waiting == 0)
+            self._readers += 1
+        try:
+            yield
+        finally:
+            async with self._cond:
+                self._readers -= 1
+                self._cond.notify_all()
+
+    @contextlib.asynccontextmanager
+    async def write(self):
+        async with self._cond:
+            self._waiting += 1
+            try:
+                await self._cond.wait_for(lambda: not self._writer and self._readers == 0)
+            finally:
+                self._waiting -= 1
+            self._writer = True
+        try:
+            yield
+        finally:
+            async with self._cond:
+                self._writer = False
+                self._cond.notify_all()
 
 
 class _ChunkBuffer:
@@ -152,6 +198,17 @@ class Orchestrator:
         self._consult_seq = 0
         self._budget_hit = False
 
+        # Sürüm 0.3
+        self._rw = RWLock()                                   # sıkı mod
+        self._exhausted: set[str] = set()                     # bu çalıştırmada kullanılamaz ajanlar
+        self._override: dict[str, str] = {}                   # görev → devredilen ajan
+        self._sessions: dict[tuple[str, str], str] = {}       # (görev, ajan) → oturum kimliği
+        self.usage: dict[str, dict] = {}                      # ajan → toplam kullanım
+        self._last_edit: Plan | None = None
+        self.start_checkpoint: str | None = None
+        store = CheckpointStore(self.workspace, self.settings.runs_dir) if self.settings.checkpoints else None
+        self.checkpoints = store if store is not None and store.available else None
+
     @property
     def _cfgs(self):
         return [a.cfg for a in self.agents.values()]
@@ -179,13 +236,60 @@ class Orchestrator:
                 await self.tracker.start()
                 self._tracker_ready = True
 
-    async def _ask(self, kind: str, payload: dict) -> str:
+    async def _ask(self, kind: str, payload: dict, validate=None) -> str:
+        """Onay ister. Plan onayında kullanıcı planı düzenlediyse doğrulanmış plan self._last_edit'e konur."""
         istek_id = secrets.token_hex(6)
         # Not: olay sözlüğünde 'tur' anahtarı olay türüne ayrıldığı için istek türü 'istek_turu' adıyla taşınır.
         self.emit("onay_istegi", istek_id=istek_id, istek_turu=kind, veri=payload)
-        karar = await self.approver.request(kind, payload, istek_id)
-        self.emit("onay_cevabi", istek_id=istek_id, karar=karar)
+        karar = await self.approver.request(kind, payload, istek_id, validate=validate)
+        self._last_edit = self.approver.pop_edit(istek_id)
+        self.emit("onay_cevabi", istek_id=istek_id, karar=karar, duzenlendi=self._last_edit is not None)
         return karar
+
+    # ------------------------------------------------------------------ devretme (sürüm 0.3)
+
+    def _usable(self, name: str) -> bool:
+        return name in self.agents and name not in self._exhausted
+
+    def _alternative(self, failed: str, tried: set[str]) -> str | None:
+        if not self.settings.fallback:
+            return None
+        order = [self.settings.planner] + [n for n in self.agents if n != self.settings.planner]
+        return next((n for n in order if n != failed and n not in tried and self._usable(n)), None)
+
+    def effective_assignee(self, task: Task) -> str:
+        return self._override.get(task.id, task.assignee)
+
+    def _handover(self, old: str, new: str, task: Task | None, role: str, reason: str) -> None:
+        if task is not None and role == "işçi":
+            self._override[task.id] = new
+        self.emit("devretme", gorev=task.id if task else "-", rol=role, eski=old, yeni=new, neden=reason)
+
+    async def _call_fb(self, agent: str, build, *, role: str, tag: str, task: Task | None = None,
+                       write: bool = False) -> tuple[str, str]:
+        """call() + devretme. build(ajan) o ajana göre istemi üretir. (çıktı, kullanılan ajan) döndürür."""
+        tried: set[str] = set()
+        while True:
+            if not self._usable(agent):
+                alt = self._alternative(agent, tried)
+                if alt is None:
+                    raise AgentError(f"{agent}: bu çalıştırmada kullanılamıyor ve devredilecek ajan yok.")
+                self._handover(agent, alt, task, role, "ajan daha önce kullanılamaz işaretlendi")
+                agent = alt
+            tried.add(agent)
+            session_key = (task.id, agent) if task is not None and role == "işçi" else None
+            try:
+                out = await self.call(agent, build(agent), role=role, tag=tag, task=task, write=write,
+                                      session_key=session_key)
+                return out, agent
+            except AgentError as e:
+                if QUOTA_RE.search(str(e)):
+                    self._exhausted.add(agent)
+                alt = self._alternative(agent, tried)
+                if alt is None:
+                    raise
+                self._handover(agent, alt, task, role, redact(str(e))[:300])
+                agent = alt
 
     # ================================================================== 3. Durum olayları
 
@@ -261,8 +365,14 @@ class Orchestrator:
 
     # ================================================================== 5. call()
 
+    def _lock_for(self, write: bool):
+        if self.settings.strict_guard:
+            return self._rw.write() if write else self._rw.read()
+        return self.write_lock if write else contextlib.nullcontext()
+
     async def call(self, agent_name: str, prompt: str, *, role: str, tag: str,
-                   task: Task | None = None, write: bool = False) -> str:
+                   task: Task | None = None, write: bool = False,
+                   session_key: tuple[str, str] | None = None) -> str:
         """Tek model çağrısı. Bütçe, eşzamanlılık, değişiklik denetimi ve olaylar burada uygulanır."""
         await self._gate()
         if self.calls >= self.settings.max_calls:
@@ -282,7 +392,7 @@ class Orchestrator:
             # Semafor ve kilit çağrı başına alınır, görev boyunca tutulmaz: böylece bir işçi
             # başka bir ajana danışırken kilitlenme oluşmaz.
             async with self._sems[agent_name]:
-                async with (self.write_lock if write else contextlib.nullcontext()):
+                async with self._lock_for(write):
                     files = list(task.files) if (write and task) else None
                     if write:
                         busy, detay = "dosya_yaziyor", ", ".join(files or [])
@@ -290,9 +400,11 @@ class Orchestrator:
                         busy, detay = ("denetliyor" if role == "denetçi" else "dusunuyor"), ""
                     self._agent_status(agent_name, n, busy, role, gorev, detay)
                     self.tracker.begin(CallInfo(n, agent_name, gorev, write, files if write else None))
+                    meta: dict = {}
+                    session = self._sessions.get(session_key) if session_key else None
                     try:
                         out = await agent.run(prompt, write=write, workdir=self.workspace,
-                                              tag=f"{tag}-{n}", on_chunk=chunks.add)
+                                              tag=f"{tag}-{n}", on_chunk=chunks.add, session=session, meta=meta)
                     except BaseException as e:  # noqa: BLE001 - değişiklik denetimi her durumda yapılmalı
                         error = e
                     chunks.flush()
@@ -310,11 +422,24 @@ class Orchestrator:
         finally:
             if n in self._agent_calls.get(agent_name, {}):
                 self._agent_status(agent_name, n, "bosta")
-        self.emit("yanit", no=n, ajan=agent_name, rol=role, gorev=tag, metin=out)
+        self.emit("yanit", no=n, ajan=agent_name, rol=role, gorev=tag, metin=out, devam_oturumu=bool(session))
+        if session_key and meta.get("session"):
+            self._sessions[session_key] = meta["session"]
+        self._record_usage(agent_name, meta.get("usage"))
         self._emit_budget()
         if report is not None:
             await self._handle_report(report)
         return out
+
+    def _record_usage(self, agent: str, usage: dict | None) -> None:
+        tot = self.usage.setdefault(agent, {"girdi": 0, "cikti": 0, "maliyet_usd": 0.0, "cagri": 0})
+        tot["cagri"] += 1
+        if usage:
+            tot["girdi"] += usage.get("girdi") or 0
+            tot["cikti"] += usage.get("cikti") or 0
+            if usage.get("maliyet_usd") is not None:
+                tot["maliyet_usd"] = round(tot["maliyet_usd"] + usage["maliyet_usd"], 6)
+        self.emit("kullanim", ajan=agent, son=usage or {}, toplam={k: dict(v) for k, v in self.usage.items()})
 
     # ================================================================== 6. Değişiklik raporu ve ihlaller
 
@@ -374,23 +499,24 @@ class Orchestrator:
         protected = self.config.guard.protected_paths
         common = dict(verify_cmds=self.config.verify.commands, protected=protected,
                       tree=self.tracker.tree(), memory=self._memory_text(), notes=self.notes)
-        if phase is None:
-            prompt = prompts.planner(goal, self._cfgs, s.planner, s.max_tasks, s.language, **common)
-        else:
-            prompt = prompts.phase_planner(goal, self._cfgs, s.planner, s.max_tasks, s.language, phase=phase,
-                                           max_phases=s.max_phases, prev_results=prev_results, **common)
+
+        def build(agent: str) -> str:
+            if phase is None:
+                return prompts.planner(goal, self._cfgs, agent, s.max_tasks, s.language, **common)
+            return prompts.phase_planner(goal, self._cfgs, agent, s.max_tasks, s.language, phase=phase,
+                                         max_phases=s.max_phases, prev_results=prev_results, **common)
 
         def parse(text: str) -> Plan:
             return parse_plan(text, names, s.max_tasks, verify_names=verify_names, protected=protected,
                               phased=phase is not None)
 
-        out = await self.call(s.planner, prompt, role="planlayıcı", tag="plan")
+        out, used = await self._call_fb(s.planner, build, role="planlayıcı", tag="plan")
         try:
             plan = parse(out)
         except PlanError as e:
             self.emit("hata", uyari=True, mesaj=f"Plan geçersiz: {e} Planlayıcıdan bir kez düzeltme isteniyor.")
-            out = await self.call(s.planner, prompts.planner_fix(prompt, out, str(e)),
-                                  role="planlayıcı", tag="plan-duzeltme")
+            out, _ = await self._call_fb(used, lambda a: prompts.planner_fix(build(a), out, str(e)),
+                                         role="planlayıcı", tag="plan-duzeltme")
             plan = parse(out)  # ikinci hata dışarı fırlatılır
         self.emit("plan", plan=plan.to_dict(), asama=phase)
         return plan
@@ -490,11 +616,10 @@ class Orchestrator:
             if not s.reviewer or used >= s.max_revisions:
                 break
             self._task_status(task, "denetimde")
-            raw = await self.call(
-                s.reviewer,
-                prompts.review(goal, task, output, s.language, verify_results=vres,
-                               unreported=self._unreported.get(task.id, [])),
-                role="denetçi", tag=f"{task.id}-denetim", task=task)
+            review_prompt = prompts.review(goal, task, output, s.language, verify_results=vres,
+                                           unreported=self._unreported.get(task.id, []))
+            raw, _ = await self._call_fb(s.reviewer, lambda a: review_prompt, role="denetçi",
+                                         tag=f"{task.id}-denetim", task=task)
             verdict, feedback = parse_review(raw)
             self.emit("denetim", gorev=task.id, karar=verdict, geri_bildirim=feedback, otomatik=False)
             if verdict == "approve":
@@ -517,33 +642,42 @@ class Orchestrator:
         for rnd in range(s.max_consult_rounds + 1):
             allow_ask = rnd < s.max_consult_rounds
             await self._gate()
-            prompt = prompts.worker(goal, task, self._cfgs, deps, answers, draft, feedback, s.language,
-                                    allow_ask=allow_ask, tree=self.tracker.tree(), memory=self._memory_text(),
-                                    notes=self.notes)
-            out = await self.call(task.assignee, prompt, role="işçi", tag=task.id, task=task,
-                                  write=task.needs_write)
+            tree, memory = self.tracker.tree(), self._memory_text()
+
+            def build(agent: str) -> str:
+                return prompts.worker(goal, task, self._cfgs, deps, answers, draft, feedback, s.language,
+                                      allow_ask=allow_ask, tree=tree, memory=memory, notes=self.notes,
+                                      as_agent=agent)
+            out, me = await self._call_fb(self.effective_assignee(task), build, role="işçi", tag=task.id,
+                                          task=task, write=task.needs_write)
             asks = ASK_RE.findall(out)[:MAX_ASKS_PER_TURN]
             if not asks or not allow_ask:
                 return strip_asks(out)
             draft = strip_asks(out) or draft
             for target, question in asks:
                 question = question.strip()[:MAX_QUESTION_CHARS]
-                if target not in self.agents or target == task.assignee:
+                if target not in self.agents or target == me:
                     answer = f"(Geçersiz hedef: {target})"
+                elif not self._usable(target):
+                    answer = f"({target} bu çalıştırmada kullanılamıyor; kendi değerlendirmenle devam et.)"
                 else:
                     self._consult_seq += 1
                     key = ("danisma", self._consult_seq)
-                    self.emit("danisma_basladi", gorev=task.id, soran=task.assignee, hedef=target, soru=question)
-                    self._agent_status(task.assignee, key, "danisiyor", "işçi", task.id, target)
+                    self.emit("danisma_basladi", gorev=task.id, soran=me, hedef=target, soru=question)
+                    self._agent_status(me, key, "danisiyor", "işçi", task.id, target)
                     try:
                         # Danışman hiçbir zaman yazma izni almaz.
-                        raw = await self.call(target, prompts.consult(goal, task.assignee, task, question, s.language),
+                        raw = await self.call(target, prompts.consult(goal, me, task, question, s.language),
                                               role="danışman", tag=f"{task.id}-danisma", task=task, write=False)
+                    except AgentError as e:
+                        if QUOTA_RE.search(str(e)):
+                            self._exhausted.add(target)
+                        raw = f"({target} yanıt veremedi; kendi değerlendirmenle devam et.)"
                     finally:
-                        self._agent_status(task.assignee, key, "bosta")
+                        self._agent_status(me, key, "bosta")
                     answer = strip_asks(raw)
                 answers.append({"hedef": target, "soru": question, "cevap": answer})
-                self.emit("danisma", gorev=task.id, soran=task.assignee, hedef=target, soru=question, cevap=answer)
+                self.emit("danisma", gorev=task.id, soran=me, hedef=target, soru=question, cevap=answer)
         return strip_asks(draft or "")  # erişilmez: son turda allow_ask kapalıdır
 
     # ================================================================== 11. Doğrulama
@@ -564,10 +698,11 @@ class Orchestrator:
             key = -self.verify_runs   # doğrulama çalışmaları izleyicide negatif numarayla tutulur
             # Doğrulama yazma kilidiyle çalışır: testlerin ürettiği dosyalar bir ajana atfedilmez,
             # ama korumalı yollardaki değişiklikler yine ihlal sayılır.
-            async with self.write_lock:
+            async with self._lock_for(True):
                 self.tracker.begin(CallInfo(key, "dogrulama", task.id, True, None))
                 try:
-                    res = await run_verify(cmd, self.workspace, vcfg.env_passthrough)
+                    res = await run_verify(cmd, self.workspace, vcfg.env_passthrough, sandbox=vcfg.sandbox,
+                                           image=vcfg.docker_image)
                 finally:
                     report = await self.tracker.end(key)
             self.emit("dogrulama", gorev=task.id, komut=res.name, cikis_kodu=res.exit_code,
@@ -582,8 +717,9 @@ class Orchestrator:
     async def synthesize(self, goal: str, plan: Plan, results: dict[str, TaskResult], *,
                          incomplete: bool = False) -> str:
         s = self.settings
-        text = await self.call(s.planner, prompts.synthesis(goal, plan, results, s.language, incomplete=incomplete),
-                               role="sentez", tag="sentez")
+        text, _ = await self._call_fb(s.planner, lambda a: prompts.synthesis(goal, plan, results, s.language,
+                                                                             incomplete=incomplete),
+                                      role="sentez", tag="sentez")
         self.emit("sentez", metin=text)
         return text
 
@@ -604,6 +740,8 @@ class Orchestrator:
                             for t in plan.tasks if ph.sonuclar.get(t.id, {}).get("durum") != "tamam")
                 self.emit("devam", onceki_calls=st.toplam_cagri, kalan_gorevler=kalan)
             await self._startup_checks()
+            await self._checkpoint("devam başlangıcı" if resumed else f"başlangıç: {goal.strip().splitlines()[0][:80]}", 0,
+                                   start=True)
             if self.memory is not None and not resumed:
                 self.memory.add_goal(goal)
             self._save_state()
@@ -638,6 +776,21 @@ class Orchestrator:
             self.emit("durum", durum="hata")
             raise
 
+    async def _checkpoint(self, etiket: str, asama: int, *, start: bool = False) -> None:
+        """Çalışma klasörünün anlık kopyasını alır (git varsa). Hata çalıştırmayı durdurmaz."""
+        if self.checkpoints is None:
+            return
+        try:
+            cp = await asyncio.to_thread(self.checkpoints.create, etiket)
+        except CheckpointError as e:
+            self.emit("hata", uyari=True, mesaj=f"Kontrol noktası alınamadı: {e}")
+            return
+        if start:
+            self.start_checkpoint = cp.sha
+        if self.state is not None:
+            self.state.kontrol.append({"sha": cp.sha, "etiket": cp.etiket, "asama": asama, "zaman": cp.zaman})
+        self.emit("kontrol_noktasi", sha=cp.sha, etiket=cp.etiket, asama=asama, baslangic=start)
+
     def _mark_stopped(self) -> None:
         if self.state is not None:
             self.state.durum = "durduruldu"
@@ -667,12 +820,15 @@ class Orchestrator:
                 for tid, r in ph.sonuclar.items()}
 
     async def _run_phase_tasks(self, k: int, plan: Plan, ph: PhaseState, goal: str,
-                               prefix: str) -> tuple[dict[str, TaskResult], bool]:
-        """Aşamanın tamamlanmamış görevlerini çalıştırır. (sonuçlar, çalıştırıldı_mı) döndürür."""
+                               prefix: str) -> tuple[dict[str, TaskResult], bool, Plan]:
+        """Aşamanın tamamlanmamış görevlerini çalıştırır. (sonuçlar, çalıştırıldı_mı, plan) döndürür.
+
+        Kullanıcı onay sırasında planı düzenlediyse düzenlenmiş plan geri döner.
+        """
         prior = {tid: r for tid, r in self._results_from_state(ph).items() if r.status == "tamam"}
         remaining = [t for t in plan.tasks if t.id not in prior]
         if not remaining:
-            return prior, False
+            return prior, False, plan
         for t in plan.tasks:
             self._task_status(t, "tamam" if t.id in prior else "bekliyor")
         payload = {
@@ -681,8 +837,27 @@ class Orchestrator:
             "verify_commands": [{"name": c.name, "argv": c.argv} for c in
                                 (self.config.verify.get(v) for v in plan.verify_names) if c],
         }
-        if await self._ask("plan", payload) != "onay":
+        phased = bool(self.state and self.state.mod == "asamali")
+        s = self.settings
+
+        def validate(d: dict) -> Plan:
+            # Kullanıcının düzenlediği plan da aynı sıkı kurallarla doğrulanır (kural 9).
+            return parse_plan(json.dumps(d, ensure_ascii=False), list(self.agents), s.max_tasks,
+                              verify_names=[c.name for c in self.config.verify.commands],
+                              protected=self.config.guard.protected_paths, phased=phased)
+
+        if await self._ask("plan", payload, validate=validate) != "onay":
             raise RunCancelled("Kullanıcı planı onaylamadı.")
+        if self._last_edit is not None:
+            plan = self._last_edit
+            ph.plan = plan.to_dict()
+            prior = {tid: r for tid, r in prior.items() if any(t.id == tid for t in plan.tasks)}
+            ph.sonuclar = {tid: r for tid, r in ph.sonuclar.items() if tid in prior}
+            remaining = [t for t in plan.tasks if t.id not in prior]
+            self._save_file(f"plan-a{k}.json" if phased else "plan.json",
+                            json.dumps(plan.to_dict(), ensure_ascii=False, indent=2))
+            self.emit("plan", plan=plan.to_dict(), asama=k if phased else None, duzenlendi=True)
+            self._save_state()
         for t in remaining:
             self._task_status(t, "atandi")
 
@@ -699,7 +874,7 @@ class Orchestrator:
             self._save_state()
             raise BudgetExceeded(f"Çağrı bütçesi doldu ({self.settings.max_calls}). Kalan görevler için: "
                                  f"python -m orkestra devam {self.run_dir or '<run_klasoru>'}")
-        return results, True
+        return results, True, plan
 
     async def _finish_phase(self, k: int, plan: Plan, ph: PhaseState, results: dict[str, TaskResult],
                             prefix: str) -> None:
@@ -707,6 +882,7 @@ class Orchestrator:
         for t in plan.tasks:
             self._save_file(f"gorev-{prefix}{t.id}.md", self._task_md(t, results.get(t.id)))
         await self._update_memory(k, plan, results)
+        await self._checkpoint(f"aşama {k} bitti: {(plan.phase_title or plan.summary)[:80]}", k)
         self._save_state()
         if self.state and self.state.mod == "asamali":
             self.emit("asama", no=k, baslik=plan.phase_title, durum="bitti")
@@ -747,7 +923,7 @@ class Orchestrator:
             self._save_file("plan.json", json.dumps(plan.to_dict(), ensure_ascii=False, indent=2))
             self._save_state()
         # Devamda "hata" ve "atlandı" görevler de yeniden çalıştırılır (bölüm 9.6).
-        results, ran = await self._run_phase_tasks(1, plan, ph, goal, "")
+        results, ran, plan = await self._run_phase_tasks(1, plan, ph, goal, "")
         if ran or not ph.bitti:
             await self._finish_phase(1, plan, ph, results, "")
         return await self.synthesize(goal, plan, results)
@@ -780,7 +956,7 @@ class Orchestrator:
             results = self._results_from_state(ph)
             if not ph.bitti or ph.no == last_no:
                 self.emit("asama", no=ph.no, baslik=plan.phase_title, durum="calisiyor")
-                results, ran = await self._run_phase_tasks(ph.no, plan, ph, goal, f"a{ph.no}-")
+                results, ran, plan = await self._run_phase_tasks(ph.no, plan, ph, goal, f"a{ph.no}-")
                 if ran or not ph.bitti:
                     await self._finish_phase(ph.no, plan, ph, results, f"a{ph.no}-")
             all_plans.append((ph.no, plan, results))
@@ -799,7 +975,7 @@ class Orchestrator:
             self._save_file(f"plan-a{k}.json", json.dumps(plan.to_dict(), ensure_ascii=False, indent=2))
             self._save_state()
             self.emit("asama", no=k, baslik=plan.phase_title, durum="calisiyor")
-            results, _ = await self._run_phase_tasks(k, plan, ph, goal, f"a{k}-")
+            results, _, plan = await self._run_phase_tasks(k, plan, ph, goal, f"a{k}-")
             await self._finish_phase(k, plan, ph, results, f"a{k}-")
             all_plans.append((k, plan, results))
             prev_text = self._phase_summary(plan, results)

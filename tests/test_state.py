@@ -62,7 +62,7 @@ class ResumeTests(unittest.TestCase):
         with mock.patch("sys.stdout"), mock.patch("sys.stderr"):
             self.assertEqual(main(["run", "--mock", "--yes", "--config", str(cfg_path),
                                    "--workspace", str(ws), "deneme"]), 1)
-        run_dir = next((tmp / "runs").iterdir())
+        run_dir = next(d for d in (tmp / "runs").iterdir() if d.name[0].isdigit())   # _kontrol/ hariç
         cfg_path.write_text(text.replace("max_calls = 4", "max_calls = 60"), encoding="utf-8")
         with mock.patch("sys.stdout"), mock.patch("sys.stderr"):
             self.assertEqual(main(["devam", str(run_dir), "--mock", "--yes", "--config", str(cfg_path)]), 0)

@@ -27,6 +27,36 @@ class AgentError(Exception):
 # Etiketler motor tarafından yalnızca güvenli kimliklerden üretilir (ör. "t1-danisma-5").
 # Yine de dosya adı olarak kullanılmadan önce burada ikinci kez denetlenir.
 _TAG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,99}$")
+# Oturum kimliği CLI'ın JSON üst verisinden gelir (model metninden değil) ve argv'ye girmeden önce
+# sıkı bir desenle doğrulanır (kural 2'nin bilinçli ve sınırlı istisnası; bölüm 16).
+SESSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$")
+
+
+def _int0(v) -> int:
+    return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else 0
+
+
+def usage_from(data: dict) -> dict | None:
+    """CLI JSON çıktısından kullanım bilgisini çıkarır (Claude: usage/total_cost_usd, Gemini: stats)."""
+    girdi = cikti = 0
+    maliyet = None
+    u = data.get("usage")
+    if isinstance(u, dict):
+        girdi += sum(_int0(u.get(k)) for k in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
+        cikti += _int0(u.get("output_tokens"))
+    c = data.get("total_cost_usd")
+    if isinstance(c, (int, float)) and not isinstance(c, bool) and c >= 0:
+        maliyet = float(c)
+    stats = data.get("stats")
+    if isinstance(stats, dict) and isinstance(stats.get("models"), dict):
+        for m in stats["models"].values():
+            t = m.get("tokens") if isinstance(m, dict) else None
+            if isinstance(t, dict):
+                girdi += _int0(t.get("prompt"))
+                cikti += _int0(t.get("candidates"))
+    if not girdi and not cikti and maliyet is None:
+        return None
+    return {"girdi": girdi, "cikti": cikti, "maliyet_usd": maliyet}
 
 
 class Agent:
@@ -37,7 +67,9 @@ class Agent:
     def name(self) -> str:
         return self.cfg.name
 
-    async def run(self, prompt: str, *, write: bool, workdir: Path, tag: str, on_chunk: OnChunk = None) -> str:
+    async def run(self, prompt: str, *, write: bool, workdir: Path, tag: str, on_chunk: OnChunk = None,
+                  session: str | None = None, meta: dict | None = None) -> str:
+        """meta verilirse 'session' (oturum kimliği) ve 'usage' (kullanım) alanları doldurulur."""
         raise NotImplementedError
 
 
@@ -55,8 +87,10 @@ class CliAgent(Agent):
             )
         return exe
 
-    async def run(self, prompt: str, *, write: bool, workdir: Path, tag: str, on_chunk: OnChunk = None) -> str:
+    async def run(self, prompt: str, *, write: bool, workdir: Path, tag: str, on_chunk: OnChunk = None,
+                  session: str | None = None, meta: dict | None = None) -> str:
         cfg = self.cfg
+        meta = meta if meta is not None else {}
         if not _TAG_RE.match(tag):
             raise SecurityError(f"Güvensiz çağrı etiketi: {tag[:60]!r}")
         workdir = Path(workdir)
@@ -67,6 +101,8 @@ class CliAgent(Agent):
             raise AgentError(f"{self.name}: '{base[0]}' programı bulunamadı. "
                              f"Kurulumu kontrol etmek için 'python -m orkestra doctor' çalıştır.")
         argv = [exe, *base[1:], *(cfg.write_args if write else cfg.read_only_args)]
+        if session and cfg.resume_args and SESSION_RE.match(session):
+            argv += [a.replace("{session}", session) for a in cfg.resume_args]
         stdin_data: bytes | None = None
         prompt_file: Path | None = None
         try:
@@ -93,7 +129,7 @@ class CliAgent(Agent):
             )
             try:
                 if streaming:
-                    return await asyncio.wait_for(self._stream(proc, stdin_data, on_chunk), cfg.timeout_s)
+                    return await asyncio.wait_for(self._stream(proc, stdin_data, on_chunk, meta), cfg.timeout_s)
                 out_b, err_b = await asyncio.wait_for(proc.communicate(stdin_data), cfg.timeout_s)
             except asyncio.TimeoutError:
                 await _kill_tree(proc)
@@ -113,18 +149,18 @@ class CliAgent(Agent):
         if proc.returncode != 0:
             detail = redact((err.strip() or out.strip())[-1500:])
             raise AgentError(f"{self.name}: çıkış kodu {proc.returncode}. {detail}")
-        text = self._extract(out) if cfg.output == "json" else out
+        text = self._extract(out, meta) if cfg.output == "json" else out
         return text.strip()[: cfg.max_output_chars]
 
     # ------------------------------------------------------------------ canlı akış (bölüm 10.3)
 
-    async def _stream(self, proc, stdin_data: bytes | None, on_chunk: OnChunk) -> str:
+    async def _stream(self, proc, stdin_data: bytes | None, on_chunk: OnChunk, meta: dict) -> str:
         cfg = self.cfg
         emit = on_chunk or (lambda _t: None)
         err_buf = bytearray()
         out_parts: list[str] = []
         sum_len = [0]
-        state = {"result": None, "is_error": False, "texts": []}
+        state = {"result": None, "is_error": False, "texts": [], "meta": meta}
 
         async def feed():
             if stdin_data is None or proc.stdin is None:
@@ -176,7 +212,7 @@ class CliAgent(Agent):
             raise AgentError(f"{self.name}: çıkış kodu {proc.returncode}. {redact(err[-1500:])}")
         if cfg.stream_format == "text":
             text = "".join(out_parts)
-            text = self._extract(text) if cfg.output == "json" else text
+            text = self._extract(text, meta) if cfg.output == "json" else text
         elif cfg.stream_format == "claude-stream-json":
             if state["is_error"]:
                 raise AgentError(f"{self.name}: CLI hata bildirdi: {redact(str(state['result']))[:800]}")
@@ -211,10 +247,12 @@ class CliAgent(Agent):
             elif typ == "result":
                 state["result"] = obj.get("result")
                 state["is_error"] = bool(obj.get("is_error"))
+                self._fill_meta(obj, state["meta"])
         else:
             if typ == "result":
                 if isinstance(obj.get("response"), str):
                     state["result"] = obj["response"]
+                self._fill_meta(obj, state["meta"])
                 return
             if obj.get("role") in ("user", "system"):
                 return
@@ -225,7 +263,16 @@ class CliAgent(Agent):
                     state["texts"].append(text)
                 emit(text)
 
-    def _extract(self, text: str) -> str:
+    def _fill_meta(self, data: dict, meta: dict) -> None:
+        if self.cfg.session_field:
+            sid = data.get(self.cfg.session_field)
+            if isinstance(sid, str) and SESSION_RE.match(sid):
+                meta["session"] = sid
+        usage = usage_from(data)
+        if usage:
+            meta["usage"] = usage
+
+    def _extract(self, text: str, meta: dict | None = None) -> str:
         data = None
         try:
             data = json.loads(text)
@@ -245,6 +292,8 @@ class CliAgent(Agent):
             if not isinstance(detail, str):
                 detail = json.dumps(detail, ensure_ascii=False)
             raise AgentError(f"{self.name}: CLI hata bildirdi: {redact(detail)[:800]}")
+        if meta is not None:
+            self._fill_meta(data, meta)
         value = data.get(self.cfg.json_field)
         if not isinstance(value, str):
             raise AgentError(f"{self.name}: JSON çıktısında '{self.cfg.json_field}' metin alanı yok.")
@@ -346,7 +395,17 @@ class MockAgent(Agent):
             plan["done"] = False
         return plan
 
-    async def run(self, prompt: str, *, write: bool, workdir: Path, tag: str, on_chunk: OnChunk = None) -> str:
+    async def run(self, prompt: str, *, write: bool, workdir: Path, tag: str, on_chunk: OnChunk = None,
+                  session: str | None = None, meta: dict | None = None) -> str:
+        text = await self._respond(prompt, write=write, workdir=workdir, tag=tag, on_chunk=on_chunk)
+        if meta is not None:
+            # Sahte kullanım: kabaca 4 karakter = 1 token. Sahte oturum kimliği, sürekliliğin testi içindir.
+            meta["usage"] = {"girdi": len(prompt) // 4, "cikti": len(text) // 4, "maliyet_usd": None}
+            if self.cfg.session_field:
+                meta["session"] = session or f"sahte-oturum-{self.name}-{tag.split('-')[0]}"
+        return text
+
+    async def _respond(self, prompt: str, *, write: bool, workdir: Path, tag: str, on_chunk: OnChunk) -> str:
         await self._sleep(0.05)
         n = self.all_names
         head = prompt.split("\n", 1)[0]
