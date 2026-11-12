@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+import threading
 from pathlib import Path
 
 from . import __version__
@@ -105,6 +106,53 @@ def _execute(orch: Orchestrator, goal: str, bus: EventBus, settings_max_calls: i
     return 0
 
 
+# ====================================================================== ui (bölüm 10.8)
+
+def _serve(cfg: Config, args, *, goal: str | None = None, resume: str | None = None) -> int:
+    """Yerel sunucuyu başlatır; isteğe bağlı olarak bir çalıştırmayı hemen başlatır. Ctrl+C ile kapanır."""
+    from .server import ApiError, OrkestraServer
+    port = getattr(args, "port", None)
+    app = OrkestraServer(cfg, mock=args.mock, port=port,
+                         open_browser=False if getattr(args, "no_browser", False) else None)
+    try:
+        app.start()
+    except OSError as e:
+        _err(str(e))
+        return 2
+    print(f"Orkestra {__version__} görsel çalışma alanı" + (" (sahte ajanlar)" if args.mock else ""))
+    # Token konsola yalnızca açılış adresinin parçası olarak bir kez yazılır (kural 21).
+    print(f"Adres: {app.url}")
+    print("Kapatmak için Ctrl+C.")
+    try:
+        if goal is not None:
+            app.start_run(goal, str(cfg.settings.workspace), cfg.settings.mode)
+        elif resume is not None:
+            app.resume_run(resume)
+    except ApiError as e:
+        _err(e.message)
+        app.shutdown()
+        return 2
+    app.open()
+    try:
+        while True:
+            threading.Event().wait(3600)
+    except KeyboardInterrupt:
+        print("\nKapatılıyor: aktif çalıştırma durduruluyor ve durum kaydediliyor…", file=sys.stderr)
+        app.shutdown()
+        return 130
+
+
+def cmd_ui(args) -> int:
+    try:
+        cfg = _load_config(args)
+        if args.port is not None and not (1024 <= args.port <= 65535):
+            raise ConfigError("--port 1024 ile 65535 arasında olmalı.")
+    except ConfigError as e:
+        _err(str(e))
+        return 2
+    return _serve(cfg, args)
+
+
 # ====================================================================== run
 
 def cmd_run(args) -> int:
@@ -128,6 +176,9 @@ def cmd_run(args) -> int:
         _err(str(e))
         return 2
     cfg.settings.workspace = ws
+    if args.ui:
+        args.port, args.no_browser = None, False
+        return _serve(cfg, args, goal=goal)
 
     try:
         transcript = Transcript(cfg.settings.runs_dir)
@@ -176,6 +227,9 @@ def cmd_devam(args) -> int:
         return 0
     cfg.settings.workspace = ws
     cfg.settings.mode = state.mod
+    if args.ui:
+        args.port, args.no_browser = None, False
+        return _serve(cfg, args, resume=run_dir.name)
 
     transcript = Transcript(cfg.settings.runs_dir, existing=run_dir)
     bus = EventBus()
@@ -244,6 +298,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--mock", action="store_true", help="gerçek CLI yerine sahte ajanlar kullan")
     r.add_argument("--yes", action="store_true", help="salt-okunur planları otomatik onayla")
     r.add_argument("--asamali", action="store_true", help="aşamalı mod (büyük uygulamalar için)")
+    r.add_argument("--ui", action="store_true", help="çalıştırmayı görsel çalışma alanında başlat")
     r.set_defaults(func=cmd_run)
 
     dv = sub.add_parser("devam", help="yarım kalan bir çalıştırmayı kaldığı yerden sürdür")
@@ -251,7 +306,15 @@ def build_parser() -> argparse.ArgumentParser:
     dv.add_argument("--config", help="config dosyası")
     dv.add_argument("--mock", action="store_true", help="gerçek CLI yerine sahte ajanlar kullan")
     dv.add_argument("--yes", action="store_true", help="salt-okunur planları otomatik onayla")
+    dv.add_argument("--ui", action="store_true", help="görsel çalışma alanında sürdür")
     dv.set_defaults(func=cmd_devam)
+
+    u = sub.add_parser("ui", help="görsel çalışma alanını başlat (yalnızca 127.0.0.1)")
+    u.add_argument("--port", type=int, help="başlangıç portu (doluysa sonraki 10 port denenir)")
+    u.add_argument("--no-browser", action="store_true", help="tarayıcıyı otomatik açma")
+    u.add_argument("--mock", action="store_true", help="sahte ajanlarla dene (abonelik harcamaz)")
+    u.add_argument("--config", help="config dosyası")
+    u.set_defaults(func=cmd_ui)
 
     d = sub.add_parser("doctor", help="CLI araçlarını ve çalışma klasörünü kontrol et")
     d.add_argument("--config", help="config dosyası")

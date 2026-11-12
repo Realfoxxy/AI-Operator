@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Orkestra</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">İçeriğe atla</a>
+
+  <header class="topbar" role="banner">
+    <div class="brand" aria-label="Orkestra">
+      <span class="brand-mark" aria-hidden="true">◆</span>
+      <span class="brand-name">Orkestra</span>
+    </div>
+    <button type="button" id="goal-btn" class="goal-line" hidden aria-expanded="false" aria-controls="goal-full">
+      <span class="goal-label">Hedef:</span> <span id="goal-text"></span>
+    </button>
+    <div class="topbar-meta">
+      <span id="phase-info" class="chip" hidden></span>
+      <div id="budget" class="budget" hidden>
+        <span class="budget-label">Bütçe</span>
+        <span class="budget-track" aria-hidden="true"><span id="budget-fill" class="budget-fill"></span></span>
+        <span id="budget-text" class="budget-text"></span>
+      </div>
+      <span id="elapsed" class="chip mono" hidden></span>
+      <span id="run-state" class="chip" hidden></span>
+      <span id="conn" class="conn" role="status"><span class="conn-dot" aria-hidden="true"></span><span id="conn-text">Bağlanıyor…</span></span>
+    </div>
+    <div class="topbar-actions">
+      <button type="button" id="approval-btn" class="btn btn-warn" hidden>Bekleyen onay</button>
+      <button type="button" id="pause-btn" class="btn" hidden aria-label="Duraklat">⏸ <span class="btn-text">Duraklat</span></button>
+      <button type="button" id="stop-btn" class="btn btn-danger" hidden aria-label="Durdur">⏹ <span class="btn-text">Durdur</span></button>
+      <button type="button" id="new-btn" class="btn" hidden>Yeni hedef</button>
+      <button type="button" id="theme-btn" class="btn btn-icon" aria-label="Temayı değiştir">☾</button>
+    </div>
+  </header>
+  <div id="goal-full" class="goal-full" hidden></div>
+
+  <main id="main" tabindex="-1">
+    <!-- ======================= Başlangıç ekranı ======================= -->
+    <section id="start-screen" class="start" aria-labelledby="start-title" hidden>
+      <div class="start-card">
+        <h1 id="start-title">Ekibe bir hedef ver</h1>
+        <p class="muted">Claude planlar ve denetler, görevler ekibe dağıtılır, ajanlar birbirine danışır. Her şeyi buradan canlı izleyebilirsin.</p>
+        <p id="mock-note" class="note" hidden>Sahte ajan modu: gerçek abonelik harcanmaz.</p>
+        <form id="start-form" novalidate>
+          <label for="goal-input">Hedef</label>
+          <textarea id="goal-input" rows="6" maxlength="20000" required placeholder="Örnek: Basit bir yapılacaklar listesi uygulaması için mimari öner ve iskeleti yaz."></textarea>
+          <div class="field-foot"><span id="goal-count" class="muted mono">0 / 20000</span></div>
+
+          <label for="ws-input">Çalışma klasörü</label>
+          <input id="ws-input" type="text" autocomplete="off" spellcheck="false" aria-describedby="ws-error ws-help">
+          <p id="ws-help" class="muted small">Ajanlar yalnızca bu klasörde çalışır. Orkestra deposunun dışında olmalıdır.</p>
+          <p id="ws-error" class="field-error" role="alert" hidden></p>
+          <p id="memory-note" class="note" hidden></p>
+
+          <fieldset class="mode">
+            <legend>Mod</legend>
+            <label class="radio"><input type="radio" name="mode" value="tek" checked> Tek plan</label>
+            <label class="radio"><input type="radio" name="mode" value="asamali"> Aşamalı (büyük uygulamalar)</label>
+          </fieldset>
+          <p id="start-error" class="field-error" role="alert" hidden></p>
+          <button type="submit" id="start-btn" class="btn btn-primary">Başlat</button>
+        </form>
+      </div>
+      <div class="start-card history">
+        <h2>Geçmiş çalıştırmalar</h2>
+        <ul id="history-list" class="history-list"></ul>
+        <p id="history-empty" class="muted" hidden>Henüz çalıştırma yok.</p>
+      </div>
+    </section>
+
+    <!-- ======================= Çalışma ekranı ======================= -->
+    <section id="run-screen" class="run" hidden>
+      <section class="office" aria-labelledby="office-title">
+        <h2 id="office-title" class="sr-only">Ofis</h2>
+        <svg id="links" class="links-layer" aria-hidden="true"></svg>
+        <div id="planner-row" class="desk-row desk-row-top"></div>
+        <div id="desk-row" class="desk-row"></div>
+        <div id="fx-layer" class="fx-layer" aria-hidden="true"></div>
+      </section>
+
+      <aside id="chat-panel" class="chat" aria-labelledby="chat-title">
+        <h2 id="chat-title">Ekip sohbeti</h2>
+        <ol id="chat-list" class="chat-list"></ol>
+        <form id="note-form" class="note-form">
+          <label for="note-text" class="sr-only">Ekibe not</label>
+          <select id="note-target" aria-label="Not hedefi"></select>
+          <input id="note-text" type="text" maxlength="2000" placeholder="Ekibe not yaz…" autocomplete="off">
+          <button type="submit" class="btn">⏎ <span class="sr-only">Gönder</span></button>
+        </form>
+      </aside>
+
+      <section class="tabs" aria-label="Paneller">
+        <div class="tablist" role="tablist" aria-label="Paneller">
+          <button type="button" role="tab" id="tab-board" aria-controls="panel-board" aria-selected="true">Pano</button>
+          <button type="button" role="tab" id="tab-graph" aria-controls="panel-graph" aria-selected="false" tabindex="-1">Plan grafiği</button>
+          <button type="button" role="tab" id="tab-files" aria-controls="panel-files" aria-selected="false" tabindex="-1">Dosyalar</button>
+          <button type="button" role="tab" id="tab-verify" aria-controls="panel-verify" aria-selected="false" tabindex="-1">Doğrulama</button>
+          <button type="button" role="tab" id="tab-report" aria-controls="panel-report" aria-selected="false" tabindex="-1">Rapor</button>
+          <button type="button" role="tab" id="tab-chat" aria-controls="panel-chat" aria-selected="false" tabindex="-1" class="tab-chat">Sohbet</button>
+        </div>
+        <div role="tabpanel" id="panel-board" aria-labelledby="tab-board" class="panel">
+          <div id="board" class="board"></div>
+        </div>
+        <div role="tabpanel" id="panel-graph" aria-labelledby="tab-graph" class="panel" hidden>
+          <div class="graph-tools"><label for="phase-select">Aşama</label> <select id="phase-select"></select></div>
+          <div class="graph-wrap"><svg id="graph" class="graph" role="img" aria-label="Görev bağımlılık grafiği"></svg></div>
+        </div>
+        <div role="tabpanel" id="panel-files" aria-labelledby="tab-files" class="panel" hidden>
+          <div class="files">
+            <ul id="file-list" class="file-list"></ul>
+            <div class="viewer">
+              <div id="viewer-head" class="viewer-head muted">Görüntülemek için bir dosya seç.</div>
+              <pre id="viewer-body" class="viewer-body" tabindex="0" aria-label="Dosya içeriği"></pre>
+            </div>
+          </div>
+        </div>
+        <div role="tabpanel" id="panel-verify" aria-labelledby="tab-verify" class="panel" hidden>
+          <ul id="verify-list" class="verify-list"></ul>
+        </div>
+        <div role="tabpanel" id="panel-report" aria-labelledby="tab-report" class="panel" hidden>
+          <div class="report-tools"><button type="button" id="download-btn" class="btn" disabled>Markdown olarak indir</button></div>
+          <article id="report" class="markdown"></article>
+        </div>
+        <div role="tabpanel" id="panel-chat" aria-labelledby="tab-chat" class="panel" hidden></div>
+      </section>
+    </section>
+  </main>
+
+  <div id="live" class="sr-only" aria-live="polite"></div>
+
+  <div id="modal-backdrop" class="modal-backdrop" hidden>
+    <div id="modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" tabindex="-1">
+      <h2 id="modal-title"></h2>
+      <div id="modal-body" class="modal-body"></div>
+      <div id="modal-actions" class="modal-actions"></div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

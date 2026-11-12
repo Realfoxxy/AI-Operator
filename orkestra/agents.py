@@ -349,14 +349,19 @@ class MockAgent(Agent):
         if "<<ROL:PLANLAYICI>>" in head:
             m = re.search(r"<<ASAMA:(\d+)>>", head)
             plan = self._plan(int(m.group(1)) if m else None)
-            return "```json\n" + json.dumps(plan, ensure_ascii=False, indent=2) + "\n```"
+            # Arayüzde planlayıcının "düşünüyor → yazıyor" geçişi görülebilsin diye kısa bir düşünme
+            # süresinden sonra plan parça parça verilir (hiz=0 iken beklemesiz).
+            await self._sleep(0.8)
+            return await self._chunked("```json\n" + json.dumps(plan, ensure_ascii=False, indent=2) + "\n```", on_chunk)
         if "<<ROL:DENETCI>>" in head:
             return '{"verdict": "approve", "feedback": "Uygun."}'
         if "<<ROL:DANISMAN>>" in head:
+            await self._sleep(0.4)
             return await self._chunked(f"[{self.name}] danışman görüşü.", on_chunk)
         if "<<ROL:SENTEZ>>" in head:
             return await self._chunked("# Sonuç\n\nSahte sentez raporu.", on_chunk)
         if "<<ROL:ISCI>>" in head:
+            await self._sleep(0.4)
             if self.name == n[0] and "DANIŞMA CEVAPLARI" not in prompt:
                 text = f'Taslak hazır.\n<<SOR ajan="{n[1 % len(n)]}">>Bu yaklaşım hakkında ne düşünüyorsun?<</SOR>>'
             else:

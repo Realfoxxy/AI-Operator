@@ -1,0 +1,360 @@
+/* Orkestra görsel çalışma alanı (bölüm 10.7)
+   - Renkler :root üzerindeki değişkenlerdir; açık/koyu tema prefers-color-scheme ile seçilir,
+     kullanıcının elle seçimi html[data-theme] ile uygulanır.
+   - Animasyonlar yalnızca transform ve opacity kullanır; prefers-reduced-motion'da kapatılır.
+   - Harici yazı tipi, görsel veya kütüphane yoktur. */
+
+/* ============================================================ 1. Tema değişkenleri */
+:root {
+  color-scheme: light;
+  --bg: #f6f5f2;
+  --surface: #ffffff;
+  --surface-2: #efede8;
+  --border: #d9d6cf;
+  --text: #1d1c1a;
+  --muted: #5d5a54;
+  --accent: #b4532a;
+  --accent-text: #ffffff;
+  --focus: #1f5fbf;
+  --ok: #17703a;
+  --ok-bg: #e3f3e8;
+  --warn: #8a5300;
+  --warn-bg: #fdf0d5;
+  --danger: #b42318;
+  --danger-bg: #fde8e6;
+  --info-bg: #e7eefb;
+  --idle: #8b8780;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .06), 0 4px 14px rgba(0, 0, 0, .06);
+  --radius: 10px;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #151514;
+    --surface: #1f1f1d;
+    --surface-2: #2a2a27;
+    --border: #3b3a36;
+    --text: #ecebe7;
+    --muted: #b0ada6;
+    --accent: #e38a62;
+    --accent-text: #1b120d;
+    --focus: #7fb0ff;
+    --ok: #6fd391;
+    --ok-bg: #18301f;
+    --warn: #f2c063;
+    --warn-bg: #352a12;
+    --danger: #ff8a80;
+    --danger-bg: #3a1a17;
+    --info-bg: #1b2638;
+    --idle: #8f8c85;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 4px 14px rgba(0, 0, 0, .3);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #151514;
+  --surface: #1f1f1d;
+  --surface-2: #2a2a27;
+  --border: #3b3a36;
+  --text: #ecebe7;
+  --muted: #b0ada6;
+  --accent: #e38a62;
+  --accent-text: #1b120d;
+  --focus: #7fb0ff;
+  --ok: #6fd391;
+  --ok-bg: #18301f;
+  --warn: #f2c063;
+  --warn-bg: #352a12;
+  --danger: #ff8a80;
+  --danger-bg: #3a1a17;
+  --info-bg: #1b2638;
+  --idle: #8f8c85;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 4px 14px rgba(0, 0, 0, .3);
+}
+
+/* ============================================================ 2. Temel */
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 var(--sans);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
+[hidden] { display: none !important; }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+.skip-link { position: absolute; left: 8px; top: -40px; background: var(--surface); padding: 6px 10px; z-index: 100; }
+.skip-link:focus { top: 8px; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+.mono { font-family: var(--mono); }
+h1, h2, h3 { line-height: 1.25; margin: 0 0 .5em; }
+h1 { font-size: 24px; }
+h2 { font-size: 17px; }
+
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 6px 12px; cursor: pointer; min-height: 36px;
+}
+.btn:hover { background: var(--surface-2); }
+.btn:disabled { opacity: .55; cursor: not-allowed; }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+.btn-primary:hover { background: var(--accent); opacity: .92; }
+.btn-danger { color: var(--danger); border-color: var(--danger); }
+.btn-warn { background: var(--warn-bg); color: var(--warn); border-color: var(--warn); font-weight: 600; }
+.btn-icon { min-width: 36px; justify-content: center; padding: 6px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px;
+  border: 1px solid var(--border); border-radius: 999px; background: var(--surface); font-size: 13px; white-space: nowrap;
+}
+.note { background: var(--info-bg); border-radius: 8px; padding: 8px 12px; font-size: 14px; }
+.field-error { color: var(--danger); font-size: 14px; margin: 4px 0 0; }
+
+/* ============================================================ 3. Üst çubuk */
+.topbar {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;
+  padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.brand { display: flex; align-items: center; gap: 6px; font-weight: 700; }
+.brand-mark { color: var(--accent); }
+.goal-line {
+  flex: 1 1 200px; min-width: 0; text-align: left; background: none; border: 0; padding: 4px 6px; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-radius: 6px;
+}
+.goal-line:hover { background: var(--surface-2); }
+.goal-label { color: var(--muted); }
+.goal-full { white-space: pre-wrap; padding: 10px 16px; background: var(--surface); border-bottom: 1px solid var(--border); max-height: 40vh; overflow: auto; }
+.topbar-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.topbar-actions { display: flex; gap: 6px; margin-left: auto; }
+.budget { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.budget-track { width: 90px; height: 8px; background: var(--surface-2); border-radius: 999px; overflow: hidden; border: 1px solid var(--border); }
+.budget-fill { display: block; height: 100%; width: 100%; background: var(--accent); transform-origin: left center; transform: scaleX(0); transition: transform .3s ease; }
+.budget.high .budget-fill { background: var(--danger); }
+.conn { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.conn-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--idle); }
+.conn.ok .conn-dot { background: var(--ok); }
+.conn.bad .conn-dot { background: var(--danger); }
+
+/* ============================================================ 4. Başlangıç ekranı */
+main { padding: 16px; }
+.start { display: grid; gap: 16px; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); max-width: 1200px; margin: 0 auto; }
+.start-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow); }
+.start label { display: block; font-weight: 600; margin: 12px 0 4px; }
+.start textarea, .start input[type="text"] {
+  width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg);
+}
+.start textarea { resize: vertical; min-height: 120px; }
+.field-foot { display: flex; justify-content: flex-end; font-size: 13px; }
+fieldset.mode { border: 1px solid var(--border); border-radius: 8px; margin: 12px 0; padding: 8px 12px; }
+fieldset.mode legend { font-weight: 600; padding: 0 4px; }
+.radio { display: inline-flex !important; align-items: center; gap: 6px; font-weight: 400 !important; margin: 4px 16px 4px 0 !important; }
+.history-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.history-list li { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; display: grid; gap: 4px; }
+.history-meta { font-size: 12px; color: var(--muted); }
+.history-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.history-actions .btn { min-height: 30px; padding: 3px 9px; font-size: 13px; }
+
+/* ============================================================ 5. Çalışma ekranı yerleşimi */
+.run {
+  display: grid; gap: 16px;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  grid-template-areas: "office chat" "tabs chat";
+  grid-template-rows: auto minmax(320px, auto);
+}
+.office { grid-area: office; position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; min-height: 340px; box-shadow: var(--shadow); }
+.chat { grid-area: chat; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; min-height: 300px; max-height: calc(100vh - 110px); position: sticky; top: 70px; box-shadow: var(--shadow); }
+.tabs { grid-area: tabs; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); min-width: 0; }
+.tab-chat { display: none; }
+
+@media (max-width: 1279px) {
+  .run { grid-template-columns: minmax(0, 1fr); grid-template-areas: "office" "tabs"; }
+  .tab-chat { display: inline-block; }
+  .panel .chat { position: static; max-height: 60vh; border: 0; box-shadow: none; padding: 0; }
+}
+@media (max-width: 767px) {
+  main { padding: 8px; }
+  .start { grid-template-columns: minmax(0, 1fr); }
+  .topbar { padding: 8px; }
+  .btn-text { display: none; }
+  .desk-row { flex-direction: column; align-items: stretch; }
+  .desk { width: auto !important; }
+  .board { grid-template-columns: minmax(0, 1fr) !important; }
+  .files { grid-template-columns: minmax(0, 1fr) !important; }
+  .links-layer, .fx-layer { display: none; }
+}
+
+/* ============================================================ 6. Ofis ve masalar */
+.desk-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 24px; position: relative; z-index: 2; }
+.desk-row-top { margin-bottom: 40px; }
+.desk {
+  --agent: var(--idle);
+  position: relative; width: 280px; background: var(--surface); border: 1px solid var(--border);
+  border-top: 4px solid var(--agent); border-radius: var(--radius); padding: 12px; box-shadow: var(--shadow);
+}
+.desk.planner { width: 340px; }
+.desk-head { display: flex; align-items: center; gap: 10px; }
+.avatar {
+  flex: none; width: 40px; height: 40px; border-radius: 50%; background: var(--agent); color: #fff;
+  display: grid; place-items: center; font-weight: 700; position: relative; font-size: 17px;
+}
+.avatar-shape { position: absolute; right: -3px; bottom: -3px; font-size: 12px; background: var(--surface); color: var(--agent); border-radius: 50%; width: 18px; height: 18px; display: grid; place-items: center; border: 1px solid var(--border); }
+.desk-name { font-weight: 700; }
+.desk-role { font-size: 12px; color: var(--muted); }
+.desk-badge { margin-left: auto; font-size: 12px; background: var(--surface-2); border-radius: 999px; padding: 1px 8px; }
+.desk-status { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 14px; }
+.desk-timer { margin-left: auto; font-family: var(--mono); font-size: 13px; color: var(--muted); }
+.desk-task { font-size: 13px; color: var(--muted); margin-top: 2px; min-height: 1.5em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.desk-files { font-size: 12px; font-family: var(--mono); color: var(--warn); margin-top: 2px; word-break: break-all; }
+.desk-live {
+  margin: 8px 0 0; font: 12px/1.45 var(--mono); background: var(--surface-2); border-radius: 6px; padding: 6px 8px;
+  height: 7.6em; overflow: auto; white-space: pre-wrap; word-break: break-word;
+}
+.desk-live:empty { display: none; }
+.cursor { display: inline-block; width: .55em; height: 1em; background: var(--text); vertical-align: text-bottom; animation: blink 1s steps(1) infinite; }
+.desk-counters { display: flex; gap: 10px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+.desk.st-bosta { opacity: .78; }
+.desk.st-bosta .avatar { filter: grayscale(.6); }
+.desk.st-hata { border-color: var(--danger); }
+.desk.st-hata .desk-status { color: var(--danger); }
+.dots span { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: currentColor; margin: 0 1px; animation: dot 1.2s infinite; }
+.dots span:nth-child(2) { animation-delay: .2s; }
+.dots span:nth-child(3) { animation-delay: .4s; }
+.flash { position: absolute; inset: -3px; border: 3px solid var(--danger); border-radius: calc(var(--radius) + 3px); pointer-events: none; opacity: 0; animation: flash .5s ease-in-out 3; }
+
+.links-layer { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; overflow: visible; }
+.link-path { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-dasharray: 7 6; animation: pulse 1.4s ease-in-out infinite; }
+.link-path.answer { stroke: var(--ok); }
+.fx-layer { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
+.bubble {
+  position: absolute; max-width: 240px; background: var(--surface); border: 1px solid var(--accent); color: var(--text);
+  border-radius: 12px; padding: 6px 10px; font-size: 13px; box-shadow: var(--shadow);
+  animation: pop .25s ease-out both; transform-origin: bottom center;
+}
+.bubble.answer { border-color: var(--ok); }
+.bubble.fade { opacity: 0; transition: opacity .6s ease; }
+.fly {
+  position: absolute; left: 0; top: 0; background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--agent, var(--accent));
+  border-radius: 8px; padding: 4px 8px; font-size: 12px; box-shadow: var(--shadow); white-space: nowrap;
+  transition: transform .6s ease, opacity .3s ease .5s;
+}
+
+/* ============================================================ 7. Sohbet */
+.chat-list { list-style: none; margin: 0; padding: 0 4px 0 0; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 8px; }
+.msg { border-left: 3px solid var(--agent, var(--border)); padding: 4px 8px; background: var(--surface-2); border-radius: 0 8px 8px 0; font-size: 14px; }
+.msg-head { font-size: 12px; color: var(--muted); display: flex; gap: 6px; flex-wrap: wrap; }
+.msg-who { font-weight: 700; color: var(--text); }
+.msg-body { white-space: pre-wrap; word-break: break-word; }
+.msg-body.clamped { max-height: 4.6em; overflow: hidden; }
+.msg-more { background: none; border: 0; color: var(--focus); padding: 0; cursor: pointer; font-size: 13px; }
+.msg.k-ok { background: var(--ok-bg); }
+.msg.k-warn { background: var(--warn-bg); }
+.msg.k-bad { background: var(--danger-bg); }
+.msg.k-note { background: var(--info-bg); }
+.note-form { display: flex; gap: 6px; margin-top: 8px; }
+.note-form select { max-width: 120px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); padding: 4px; }
+.note-form input { flex: 1; min-width: 0; border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; background: var(--bg); }
+
+/* ============================================================ 8. Sekmeler ve paneller */
+.tablist { display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid var(--border); padding: 6px 8px 0; }
+.tablist [role="tab"] { background: none; border: 0; border-bottom: 3px solid transparent; padding: 8px 12px; cursor: pointer; color: var(--muted); }
+.tablist [role="tab"][aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+.panel { padding: 12px; min-height: 260px; }
+
+.board { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+.col { background: var(--surface-2); border-radius: 8px; padding: 8px; min-height: 120px; }
+.col h3 { font-size: 13px; color: var(--muted); display: flex; justify-content: space-between; }
+.card {
+  --agent: var(--idle);
+  position: relative; display: block; width: 100%; text-align: left; background: var(--surface); border: 1px solid var(--border);
+  border-left: 4px solid var(--agent); border-radius: 8px; padding: 6px 8px; margin-bottom: 6px; cursor: pointer; font-size: 13px;
+}
+.card-id { font-family: var(--mono); color: var(--muted); font-size: 12px; }
+.card-title { font-weight: 600; display: block; }
+.card-meta { display: flex; gap: 6px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 2px; }
+.badge { border-radius: 999px; padding: 0 6px; font-size: 11px; border: 1px solid var(--border); }
+.badge.ok { color: var(--ok); border-color: var(--ok); }
+.badge.bad { color: var(--danger); border-color: var(--danger); }
+.badge.warn { color: var(--warn); border-color: var(--warn); }
+.stamp {
+  position: absolute; right: 6px; top: 6px; font-weight: 800; font-size: 13px; padding: 1px 6px; border: 2px solid currentColor;
+  border-radius: 6px; background: var(--surface); animation: stamp .45s ease-out both; pointer-events: none;
+}
+.stamp.ok { color: var(--ok); }
+.stamp.rev { color: var(--warn); }
+
+.graph-tools { margin-bottom: 8px; font-size: 14px; }
+.graph-wrap { overflow: auto; }
+.graph { display: block; min-height: 200px; }
+.g-node rect { stroke: var(--border); stroke-width: 1.5; fill: var(--surface); }
+.g-node text { fill: var(--text); font-size: 12px; font-family: var(--sans); }
+.g-node .g-id { font-family: var(--mono); fill: var(--muted); }
+.g-node.s-calisiyor rect, .g-node.s-atandi rect { stroke: var(--accent); stroke-width: 2.5; }
+.g-node.s-denetimde rect, .g-node.s-dogrulamada rect { stroke: var(--warn); stroke-width: 2.5; }
+.g-node.s-tamam rect { fill: var(--ok-bg); stroke: var(--ok); }
+.g-node.s-hata rect, .g-node.s-atlandi rect { fill: var(--danger-bg); stroke: var(--danger); }
+.g-edge { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.g-arrow { fill: var(--muted); }
+
+.files { display: grid; grid-template-columns: minmax(200px, 1fr) minmax(0, 2fr); gap: 12px; }
+.file-list { list-style: none; margin: 0; padding: 0; max-height: 60vh; overflow: auto; }
+.file-list button { width: 100%; text-align: left; background: none; border: 0; border-radius: 6px; padding: 5px 6px; cursor: pointer; display: grid; gap: 1px; }
+.file-list button:hover, .file-list button[aria-current="true"] { background: var(--surface-2); }
+.file-path { font-family: var(--mono); font-size: 13px; word-break: break-all; }
+.file-meta { font-size: 12px; color: var(--muted); }
+.file-list .unreported { background: var(--warn-bg); }
+.viewer { min-width: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.viewer-head { padding: 6px 10px; border-bottom: 1px solid var(--border); font-size: 13px; font-family: var(--mono); }
+.viewer-body { margin: 0; padding: 8px 0; max-height: 60vh; overflow: auto; font: 12px/1.5 var(--mono); counter-reset: line; }
+.viewer-body .ln { display: block; padding: 0 10px 0 0; white-space: pre; }
+.viewer-body .ln::before { counter-increment: line; content: counter(line); display: inline-block; width: 4em; padding-right: 10px; text-align: right; color: var(--muted); user-select: none; }
+
+.verify-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.verify-list li { border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
+.verify-list pre { margin: 6px 0 0; max-height: 240px; overflow: auto; font: 12px/1.45 var(--mono); background: var(--surface-2); padding: 6px; border-radius: 6px; white-space: pre-wrap; word-break: break-word; }
+
+.report-tools { margin-bottom: 8px; }
+.markdown { max-width: 860px; }
+.markdown pre { background: var(--surface-2); padding: 8px; border-radius: 6px; overflow: auto; font: 13px/1.45 var(--mono); }
+.markdown code { font-family: var(--mono); background: var(--surface-2); padding: 0 3px; border-radius: 4px; }
+.markdown pre code { background: none; padding: 0; }
+.markdown blockquote { border-left: 3px solid var(--border); margin: 0; padding-left: 12px; color: var(--muted); }
+.markdown a { color: var(--focus); }
+
+/* ============================================================ 9. Modal */
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, .45); display: grid; place-items: center; z-index: 50; padding: 16px; }
+.modal { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; width: min(860px, 100%); max-height: 90vh; overflow: auto; box-shadow: var(--shadow); animation: pop .2s ease-out both; }
+.modal.danger { border: 3px solid var(--danger); }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+.modal table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.modal th, .modal td { border-bottom: 1px solid var(--border); text-align: left; padding: 5px 6px; vertical-align: top; }
+.modal .table-wrap { overflow-x: auto; }
+.modal ul { padding-left: 20px; }
+.warn-box { background: var(--warn-bg); color: var(--text); border-left: 4px solid var(--warn); padding: 8px 10px; border-radius: 6px; margin: 10px 0; }
+.danger-box { background: var(--danger-bg); border-left: 4px solid var(--danger); padding: 8px 10px; border-radius: 6px; margin: 10px 0; }
+
+/* ============================================================ 10. Animasyonlar (yalnızca transform/opacity) */
+@keyframes blink { 50% { opacity: 0; } }
+@keyframes dot { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
+@keyframes pulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+@keyframes pop { from { opacity: 0; transform: scale(.92); } to { opacity: 1; transform: scale(1); } }
+@keyframes flash { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
+@keyframes stamp { from { opacity: 0; transform: scale(2.2) rotate(-12deg); } to { opacity: 1; transform: scale(1) rotate(-6deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  .fly { display: none; }
+  .link-path { opacity: 1; }
+  .flash { opacity: 1; }
+}
